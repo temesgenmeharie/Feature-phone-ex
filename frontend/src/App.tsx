@@ -1,7 +1,8 @@
 import { FormEvent, useState } from "react";
-import { FileBarChart2, FolderPlus, LayoutDashboard, LogOut, PlayCircle, Search, Shield, Smartphone } from "lucide-react";
+import { ClipboardList, FileBarChart2, FolderPlus, LayoutDashboard, LogOut, PlayCircle, Search, Shield, Smartphone } from "lucide-react";
 import { apiFetch } from "./lib/api";
 import { AcquisitionPage } from "./pages/AcquisitionPage";
+import { AuditAdminPage } from "./pages/AuditAdminPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DeviceConnectionPage } from "./pages/DeviceConnectionPage";
 import { NewExaminationPage } from "./pages/NewExaminationPage";
@@ -9,7 +10,7 @@ import { ReportsPage } from "./pages/ReportsPage";
 import { ResultsPage } from "./pages/ResultsPage";
 import { ExaminerProfile, useLabStore } from "./store/useAuthStore";
 
-type Page = "dashboard" | "devices" | "cases" | "acquisition" | "results" | "reports";
+type Page = "dashboard" | "devices" | "cases" | "acquisition" | "results" | "reports" | "audit";
 
 export default function App() {
   const { token, examiner, setAuth, logout } = useLabStore();
@@ -67,6 +68,7 @@ export default function App() {
     ["acquisition", "Acquisition", PlayCircle],
     ["results", "Examination Results", Search],
     ["reports", "Reports & Hashes", FileBarChart2],
+    ["audit", "Audit & Admin", ClipboardList],
   ];
 
   return (
@@ -111,7 +113,9 @@ export default function App() {
         {page === "acquisition" && <AcquisitionPage />}
         {page === "results" && <ResultsPage />}
         {page === "reports" && <ReportsPage />}
+        {page === "audit" && <AuditAdminPage />}
       </main>
     </div>
   );
 }
+

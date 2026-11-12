@@ -95,3 +95,4 @@ def test_logical_extraction_limited_itel_marks_unsupported(test_db):
         assert tasks_by_cat["contacts"].status == TaskStatus.UNSUPPORTED
         assert tasks_by_cat["call_history"].status == TaskStatus.UNSUPPORTED
         disconnect_device(db=db, current_examiner=examiner)
+

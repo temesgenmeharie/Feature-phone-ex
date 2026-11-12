@@ -201,3 +201,4 @@ def identify_device(
 @router.get("/capabilities")
 def get_capabilities(_: Examiner = Depends(get_current_examiner)) -> dict[str, Any]:
     return _last_capabilities
+

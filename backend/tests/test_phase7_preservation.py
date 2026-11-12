@@ -68,3 +68,4 @@ def test_evidence_preservation_and_sha256_verification(test_db):
         assert verify_fail["all_passed"] is False
         failed_item = next(r for r in verify_fail["results"] if r["file_name"] == "raw_at_transcript.log")
         assert failed_item["passed"] is False
+

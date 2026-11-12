@@ -19,3 +19,4 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}, token
 export function getDownloadUrl(evidenceFileId: number): string {
   return `${API_BASE}/evidence/${evidenceFileId}/download`;
 }
+

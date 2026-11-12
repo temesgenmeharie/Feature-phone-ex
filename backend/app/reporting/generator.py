@@ -310,3 +310,4 @@ def export_json_bundle(db: Session, acquisition: Acquisition, examiner: Examiner
         details={"file_name": ev_file.file_name},
     )
     return ev_file
+

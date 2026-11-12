@@ -39,3 +39,4 @@ export const useLabStore = create<LabState>((set) => ({
   setActiveDeviceId: (activeDeviceId) => set({ activeDeviceId }),
   setActiveAcquisitionId: (activeAcquisitionId) => set({ activeAcquisitionId }),
 }));
+

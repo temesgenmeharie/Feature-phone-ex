@@ -319,3 +319,4 @@ EXTRACTOR_REGISTRY: dict[ExtractionCategory, ExtractorPlugin] = {
     ExtractionCategory.CALL_HISTORY: CallHistoryExtractor(),
     ExtractionCategory.SIM_INFO: SimInfoExtractor(),
 }
+

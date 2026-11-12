@@ -4,6 +4,8 @@ from datetime import datetime, timezone, timedelta
 import re
 from typing import Any
 
+from app.extraction.pdu import decode_sms_deliver_pdu
+
 
 _CPBR_RE = re.compile(r'^\+CPBR:\s*(\d+)\s*,\s*"([^"]*)"\s*,\s*(\d+)\s*,\s*"([^"]*)"')
 _CPBR_RANGE_RE = re.compile(r"\+CPBR:\s*\((\d+)-(\d+)\)")
@@ -120,9 +122,17 @@ def parse_cmgl_pdu_lines(lines: list[str], storage: str) -> list[dict[str, Any]]
                 "raw_entry": ln,
             }
         elif current is not None:
-            current["pdu_hex"] = ln.strip()
+            pdu_hex = ln.strip()
+            current["pdu_hex"] = pdu_hex
             current["raw_entry"] += "\n" + ln
+            decoded = decode_sms_deliver_pdu(pdu_hex)
+            if decoded is not None:
+                current["sender_or_recipient"] = decoded.sender
+                current["timestamp_raw"] = decoded.timestamp_raw
+                current["timestamp_iso"] = decoded.timestamp_iso
+                current["content"] = decoded.text
 
     if current is not None:
         messages.append(current)
     return messages
+

@@ -48,3 +48,4 @@ def test_simulator_limited_profile_and_fault_injection():
     with pytest.raises(SerialTransportError):
         engine.send_command("AT")
     engine.close()
+

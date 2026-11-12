@@ -220,3 +220,4 @@ def get_sim_summary(
         "sim_contacts_count": sim_contacts,
         "sim_sms_count": sim_sms,
     }
+

@@ -76,3 +76,4 @@ def test_analysis_queries_and_report_exports(test_db):
         assert csv_out.file_name.endswith(".csv")
         json_out = export_json(acq.id, db=db, current_examiner=examiner)
         assert json_out.file_name.endswith(".json")
+

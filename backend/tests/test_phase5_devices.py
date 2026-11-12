@@ -80,3 +80,4 @@ def test_device_connect_identify_full_and_limited_profiles(test_db):
         assert "AT+CPBS=?" in ident_limited.unsupported_commands
 
         disconnect_device(db=db, current_examiner=examiner)
+

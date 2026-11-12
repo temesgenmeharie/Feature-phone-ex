@@ -173,3 +173,4 @@ class DeviceIdentifier:
             calls_cap,
             sim_cap,
         ]
+

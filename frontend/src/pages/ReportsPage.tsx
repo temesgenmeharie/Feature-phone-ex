@@ -60,6 +60,23 @@ export function ReportsPage() {
     await refetchEvidence();
   }
 
+  async function downloadFile(evidenceFileId: number, fileName: string) {
+    const res = await fetch(getDownloadUrl(evidenceFileId), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      setStatusMsg(`Download failed (${res.status})`);
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -111,9 +128,12 @@ export function ReportsPage() {
                 <td className="font-mono text-slate-400">{f.sha256}</td>
                 <td>{f.last_verification_passed === null ? "Pending" : f.last_verification_passed ? "PASS" : "FAIL"}</td>
                 <td>
-                  <a href={getDownloadUrl(f.id)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sky-400 hover:underline">
+                  <button
+                    onClick={() => downloadFile(f.id, f.file_name)}
+                    className="inline-flex items-center gap-1 text-sky-400 hover:underline"
+                  >
                     <Download className="h-3.5 w-3.5" /> Download
-                  </a>
+                  </button>
                 </td>
               </tr>
             ))}
@@ -123,3 +143,4 @@ export function ReportsPage() {
     </div>
   );
 }
+

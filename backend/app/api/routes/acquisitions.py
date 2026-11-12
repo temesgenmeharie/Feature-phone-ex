@@ -185,3 +185,4 @@ def verify_evidence(
     if not acq:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Acquisition not found")
     return verify_acquisition_evidence(db, acquisition_id, current_examiner)
+

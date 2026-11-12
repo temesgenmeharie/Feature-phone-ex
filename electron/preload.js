@@ -4,3 +4,4 @@ contextBridge.exposeInMainWorld("forensicsDesktop", {
   platform: process.platform,
   offlineMode: true,
 });
+

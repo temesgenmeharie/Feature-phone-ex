@@ -79,3 +79,4 @@ def download_evidence_file(
     if not ef or not Path(ef.file_path).exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evidence file not found")
     return FileResponse(path=ef.file_path, filename=ef.file_name)
+

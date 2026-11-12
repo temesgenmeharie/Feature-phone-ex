@@ -124,3 +124,4 @@ PROFILES: dict[str, SimulatedDeviceProfile] = {
     "nokia_105_lab": build_default_profile(),
     "itel_limited_modem": build_limited_modem_profile(),
 }
+

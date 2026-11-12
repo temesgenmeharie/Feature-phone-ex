@@ -209,3 +209,4 @@ class SimulatedSerialTransport(SerialTransport):
         if storage in ("MC", "RC", "DC"):
             return self.profile.call_logs.get(storage, [])
         return []
+

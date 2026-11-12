@@ -2,13 +2,15 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.routes import acquisitions, analysis, audit, auth, cases, devices, health, reports
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.session import init_db
+from app.serial.transport import SerialTransportError
 
 
 @asynccontextmanager
@@ -32,6 +34,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(SerialTransportError)
+    async def serial_error_handler(_request: Request, exc: SerialTransportError):
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     prefix = settings.api_v1_prefix
     app.include_router(health.router, prefix=prefix)

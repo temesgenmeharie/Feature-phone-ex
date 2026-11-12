@@ -128,11 +128,10 @@ def identify_device(
     global _last_capabilities
     try:
         engine = session_manager.require_engine()
+        log_start_idx = len(engine.logs)
+        ident = DeviceIdentifier().identify_and_probe(engine)
     except SerialTransportError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-
-    log_start_idx = len(engine.logs)
-    ident = DeviceIdentifier().identify_and_probe(engine)
     _last_capabilities = ident.capabilities
 
     device_id: int | None = None

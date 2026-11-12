@@ -1,0 +1,10 @@
+[project]
+name = "feature-phone-forensics-backend"
+version = "0.1.0"
+description = "Offline Digital Forensics Logical Extraction Backend for Feature Phones"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+

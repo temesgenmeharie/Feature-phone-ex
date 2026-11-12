@@ -17,7 +17,7 @@ An offline-capable desktop digital forensics application for **logical extractio
 - [x] **Phase 2:** Database and backend foundation
 - [x] **Phase 3:** Serial communication engine
 - [x] **Phase 4:** Simulated feature phone
-- [ ] **Phase 5:** Device identification and capability detection
+- [x] **Phase 5:** Device identification and capability detection
 - [ ] **Phase 6:** Logical data extraction
 - [ ] **Phase 7:** Evidence preservation and hashing
 - [ ] **Phase 8:** React frontend and dashboard

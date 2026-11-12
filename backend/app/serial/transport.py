@@ -24,10 +24,21 @@ class PySerialTransport(SerialTransport):
             self._serial = serial.Serial(
                 port=self.port_name,
                 baudrate=self.baud_rate,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
                 timeout=0.2,
                 write_timeout=self.timeout_s,
+                xonxoff=False,
+                rtscts=False,
+                dsrdtr=False,
             )
-            time.sleep(0.2)
+            # Assert DTR & RTS: required by many Nokia/MTK/Unisoc USB feature-phone modems
+            self._serial.dtr = True
+            self._serial.rts = True
+            time.sleep(0.25)
+            self._serial.reset_input_buffer()
+            self._serial.reset_output_buffer()
         except serial.SerialException as exc:
             raise SerialTransportError(f"Failed to open serial port {self.port_name}: {exc}") from exc
 
@@ -46,6 +57,7 @@ class PySerialTransport(SerialTransport):
         if not self.is_open() or self._serial is None:
             raise SerialTransportError("Serial port is not open")
         try:
+            self._serial.reset_input_buffer()
             written = self._serial.write(data)
             self._serial.flush()
             return int(written or 0)

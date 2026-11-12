@@ -11,6 +11,33 @@ An offline-capable desktop digital forensics application for **logical extractio
 - [API Contracts](docs/api_contracts.md)
 - [Technical Limitations](docs/technical_limitations.md)
 
+## Quick Start (Offline Lab)
+
+### 1. Backend (Python 3.12+)
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+Default bootstrap admin account (seeded automatically on first run):
+- **Username:** `admin`
+- **Password:** `ForensicsLab!2026`
+
+### 2. Run Backend Test Suite
+```powershell
+.\backend\.venv\Scripts\python.exe -m pytest backend\tests -v
+```
+
+### 3. Frontend & Electron Desktop (requires Node.js 20+ LTS)
+```powershell
+cd frontend
+npm install
+npm run build
+
+cd ..\electron
+npm install
+npm start
+```
+
 ## Development Phases
 
 - [x] **Phase 1:** Architecture and project setup
@@ -22,5 +49,4 @@ An offline-capable desktop digital forensics application for **logical extractio
 - [x] **Phase 7:** Evidence preservation and hashing
 - [x] **Phase 8:** React frontend and dashboard
 - [x] **Phase 9:** Forensic analysis and reporting
-- [ ] **Phase 10:** Testing, packaging, and documentation
-
+- [x] **Phase 10:** Testing, packaging, and documentation

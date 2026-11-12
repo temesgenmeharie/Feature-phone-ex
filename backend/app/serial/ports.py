@@ -32,7 +32,7 @@ def list_available_ports(include_simulator: bool = True) -> list[PortInfo]:
         ports.append(
             PortInfo(
                 port_name=SIMULATOR_PORT_NAME,
-                description="Simulated Feature Phone (Nokia/Itel/Tecno Lab Emulator)",
+                description="Simulated Feature Phone (AT Lab Emulator)",
                 hwid="SIMULATED-AT-MODEM-V1",
                 is_simulated=True,
             )

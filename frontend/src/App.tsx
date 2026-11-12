@@ -108,7 +108,7 @@ export default function App() {
 
       <main className="flex-1 p-6 overflow-y-auto">
         {page === "dashboard" && <DashboardPage />}
-        {page === "devices" && <DeviceConnectionPage />}
+        {page === "devices" && <DeviceConnectionPage onNavigateResults={() => setPage("results")} />}
         {page === "cases" && <NewExaminationPage />}
         {page === "acquisition" && <AcquisitionPage />}
         {page === "results" && <ResultsPage />}

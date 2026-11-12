@@ -112,3 +112,4 @@ def decode_sms_deliver_pdu(pdu_hex: str) -> DecodedPdu | None:
         return DecodedPdu(sender=sender or None, timestamp_raw=ts_raw, timestamp_iso=ts_iso, text=text)
     except Exception:
         return None
+

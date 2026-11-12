@@ -29,6 +29,7 @@ from app.models.forensics import (
     TaskStatus,
 )
 from app.serial.engine import ATCommandEngine
+from app.preservation.vault import preserve_acquisition_evidence
 from app.services.audit_service import record_audit_event
 
 
@@ -147,6 +148,8 @@ class ExtractionOrchestrator:
             acquisition.status = AcquisitionStatus.COMPLETED
         db.commit()
         db.refresh(acquisition)
+
+        preserve_acquisition_evidence(db, acquisition, raw_artifacts_by_cat)
 
         record_audit_event(
             db,

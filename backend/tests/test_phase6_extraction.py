@@ -1,5 +1,6 @@
 """Phase 6 tests: logical data extraction across full and limited simulated devices."""
 
+import pytest
 from fastapi.security import HTTPAuthorizationCredentials
 
 from app.api.deps import get_current_examiner
@@ -94,5 +95,46 @@ def test_logical_extraction_limited_itel_marks_unsupported(test_db):
         assert tasks_by_cat["device_info"].status == TaskStatus.SUPPORTED_SUCCESS
         assert tasks_by_cat["contacts"].status == TaskStatus.UNSUPPORTED
         assert tasks_by_cat["call_history"].status == TaskStatus.UNSUPPORTED
+        disconnect_device(db=db, current_examiner=examiner)
+
+
+def test_extraction_aborts_if_device_unresponsive(test_db):
+    from app.serial.transport import SerialTransportError
+
+    SessionLocal, _ = test_db
+    with SessionLocal() as db:
+        tok = login(LoginRequest(username="examiner1", password="ExaminerPass123!"), db=db)
+        examiner = get_current_examiner(
+            HTTPAuthorizationCredentials(scheme="Bearer", credentials=tok.access_token), db=db
+        )
+        case = create_case(
+            CaseCreate(case_number="CASE-2026-UNRESP", title="Unresponsive Port Test", purpose="Verify abort"),
+            db=db,
+            current_examiner=examiner,
+        )
+
+        connect_device(
+            ConnectRequest(port_name=SIMULATOR_PORT_NAME, use_simulator=True, simulator_profile="nokia_105_lab"),
+            db=db,
+            current_examiner=examiner,
+        )
+        engine = session_manager.require_engine()
+        # Simulate device being unresponsive (timeout on AT)
+        engine.transport.simulate_timeout = True
+
+        dummy_device = Device(case_id=case.id, port_name="COM1", baud_rate=115200, is_simulated=False)
+        db.add(dummy_device)
+        db.commit()
+
+        with pytest.raises(SerialTransportError, match="No responsive feature phone detected on port"):
+            ExtractionOrchestrator().run_acquisition(
+                db,
+                engine,
+                case_id=case.id,
+                device=dummy_device,
+                examiner=examiner,
+                categories=[ExtractionCategory.CALL_HISTORY],
+            )
+        engine.transport.simulate_timeout = False
         disconnect_device(db=db, current_examiner=examiner)
 

@@ -29,6 +29,7 @@ from app.models.forensics import (
     TaskStatus,
 )
 from app.serial.engine import ATCommandEngine
+from app.serial.transport import SerialTransportError
 from app.preservation.vault import preserve_acquisition_evidence
 from app.services.audit_service import record_audit_event
 
@@ -49,6 +50,15 @@ class ExtractionOrchestrator:
         acq_uid = str(uuid.uuid4())
         evidence_dir = Path(settings.evidence_dir) / f"case_{case_id}" / f"acq_{acq_uid}"
         evidence_dir.mkdir(parents=True, exist_ok=True)
+
+        # Pre-flight check: ensure the connected port actually responds to AT
+        handshake = engine.send_command("AT", timeout_s=2.0)
+        if not handshake.is_ok:
+            raise SerialTransportError(
+                f"Cannot extract data: No responsive feature phone detected on port {engine.transport.port_name}. "
+                "The port did not reply to AT commands. Please connect an authorized feature phone, power it on, "
+                "and ensure its USB mode is set to 'COM Port / Modem / PC Suite'."
+            )
 
         acquisition = Acquisition(
             acquisition_uid=acq_uid,

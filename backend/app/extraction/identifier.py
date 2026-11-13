@@ -23,6 +23,7 @@ class DeviceIdentificationResult:
     capabilities: dict[str, dict[str, Any]] = field(default_factory=dict)
     unsupported_commands: list[str] = field(default_factory=list)
     raw_responses: dict[str, str] = field(default_factory=dict)
+    error_detail: str | None = None
 
 
 def _extract_quoted_tokens(line: str) -> list[str]:
@@ -35,45 +36,74 @@ class DeviceIdentifier:
     def identify_and_probe(self, engine: ATCommandEngine) -> DeviceIdentificationResult:
         res = DeviceIdentificationResult(at_ready=False)
 
-        # Disable echo if supported (non-destructive)
-        ate0 = engine.send_command("ATE0")
-        res.raw_responses["ATE0"] = ate0.raw_response
+        # 1. Disable echo if supported (non-destructive)
+        try:
+            ate0 = engine.send_command("ATE0", timeout_s=1.5)
+            res.raw_responses["ATE0"] = ate0.raw_response
+        except Exception:
+            pass
 
-        at_check = engine.send_command("AT")
+        # 2. Critical AT handshake
+        at_check = engine.send_command("AT", timeout_s=2.0)
         res.raw_responses["AT"] = at_check.raw_response
         res.at_ready = at_check.is_ok
+
         if not at_check.is_ok:
             res.unsupported_commands.append("AT")
+            res.error_detail = (
+                f"No feature phone responded to AT commands on {engine.transport.port_name}. "
+                "Ensure the phone is powered on, connected with a data USB cable, and set to 'COM Port / Modem / PC Suite' mode."
+            )
+            # Stop immediately without querying commands that will only timeout
+            res.capabilities = {
+                cat.value: {
+                    "status": "unsupported",
+                    "supported_commands": [],
+                    "unsupported_commands": ["AT"],
+                    "notes": res.error_detail,
+                }
+                for cat in ExtractionCategory
+            }
+            return res
 
-        def query_single(cmd: str) -> str | None:
-            r = engine.send_command(cmd)
-            res.raw_responses[cmd] = r.raw_response
-            if r.is_ok and r.body_lines:
-                return r.body_lines[0]
-            if not r.is_ok:
-                res.unsupported_commands.append(cmd)
+        def query_chain(cmds: tuple[str, ...]) -> str | None:
+            """Try commands in order until one returns a non-empty answer with OK."""
+            for cmd in cmds:
+                r = engine.send_command(cmd, timeout_s=2.0)
+                res.raw_responses[cmd] = r.raw_response
+                if r.is_ok and r.body_lines:
+                    first = r.body_lines[0].strip()
+                    if first:
+                        return first
+                if not r.is_ok:
+                    res.unsupported_commands.append(cmd)
             return None
 
-        res.manufacturer = query_single("AT+GMI")
-        res.model = query_single("AT+GMM")
-        res.firmware_revision = query_single("AT+GMR")
+        # 3. Retrieve real device manufacturer, model, revision, and IMEI
+        res.manufacturer = query_chain(("AT+GMI", "AT+CGMI", "ATI"))
+        res.model = query_chain(("AT+GMM", "AT+CGMM", "ATI"))
+        res.firmware_revision = query_chain(("AT+GMR", "AT+CGMR"))
+        res.imei = query_chain(("AT+GSN", "AT+CGSN"))
 
-        imei = query_single("AT+GSN")
-        if imei is None:
-            imei = query_single("AT+CGSN")
-        res.imei = imei
+        # SIM PIN status
+        cpin_res = engine.send_command("AT+CPIN?", timeout_s=2.0)
+        res.raw_responses["AT+CPIN?"] = cpin_res.raw_response
+        if cpin_res.is_ok and cpin_res.body_lines:
+            line = cpin_res.body_lines[0]
+            if "+CPIN:" in line:
+                res.sim_status = line.split(":", 1)[1].strip()
 
-        cpin = query_single("AT+CPIN?")
-        if cpin and "+CPIN:" in cpin:
-            res.sim_status = cpin.split(":", 1)[1].strip()
-
-        cscs = query_single("AT+CSCS?")
-        if cscs and "+CSCS:" in cscs:
-            tokens = _extract_quoted_tokens(cscs)
-            res.charset = tokens[0] if tokens else cscs.split(":", 1)[1].strip()
+        # TE character set
+        cscs_res = engine.send_command("AT+CSCS?", timeout_s=2.0)
+        res.raw_responses["AT+CSCS?"] = cscs_res.raw_response
+        if cscs_res.is_ok and cscs_res.body_lines:
+            line = cscs_res.body_lines[0]
+            if "+CSCS:" in line:
+                tokens = _extract_quoted_tokens(line)
+                res.charset = tokens[0] if tokens else line.split(":", 1)[1].strip()
 
         # Probe Phonebook & Call-Log storages
-        cpbs_test = engine.send_command("AT+CPBS=?")
+        cpbs_test = engine.send_command("AT+CPBS=?", timeout_s=2.5)
         res.raw_responses["AT+CPBS=?"] = cpbs_test.raw_response
         if cpbs_test.is_ok and cpbs_test.body_lines:
             res.supported_cpbs_storages = _extract_quoted_tokens(cpbs_test.body_lines[0])
@@ -81,16 +111,15 @@ class DeviceIdentifier:
             res.unsupported_commands.append("AT+CPBS=?")
 
         # Probe SMS storages & modes
-        cpms_test = engine.send_command("AT+CPMS=?")
+        cpms_test = engine.send_command("AT+CPMS=?", timeout_s=2.5)
         res.raw_responses["AT+CPMS=?"] = cpms_test.raw_response
         if cpms_test.is_ok and cpms_test.body_lines:
-            # First parenthesized group lists read storages
             first_group = cpms_test.body_lines[0].split("),")[0]
             res.supported_cpms_storages = _extract_quoted_tokens(first_group)
         else:
             res.unsupported_commands.append("AT+CPMS=?")
 
-        cmgf_test = engine.send_command("AT+CMGF=?")
+        cmgf_test = engine.send_command("AT+CMGF=?", timeout_s=2.0)
         res.raw_responses["AT+CMGF=?"] = cmgf_test.raw_response
         if cmgf_test.is_ok and cmgf_test.body_lines:
             res.supported_sms_modes = [int(m) for m in re.findall(r"\b([01])\b", cmgf_test.body_lines[0])]
@@ -173,4 +202,3 @@ class DeviceIdentifier:
             calls_cap,
             sim_cap,
         ]
-

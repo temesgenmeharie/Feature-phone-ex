@@ -24,6 +24,8 @@ class PortOut(BaseModel):
     description: str
     hwid: str
     is_simulated: bool
+    is_usb: bool = False
+    port_type: str = "other"
 
 
 class ConnectRequest(BaseModel):
@@ -62,6 +64,7 @@ class DeviceIdentifyOut(BaseModel):
     supported_sms_modes: list[int]
     capabilities: dict[str, Any]
     unsupported_commands: list[str]
+    error_detail: str | None = None
 
 
 _last_capabilities: dict[str, Any] = {}
@@ -136,7 +139,7 @@ def identify_device(
 
     device_id: int | None = None
     case_id = payload.case_id if payload else None
-    if case_id is not None:
+    if ident.at_ready and case_id is not None:
         case = db.query(Case).filter(Case.id == case_id).first()
         if not case:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
@@ -177,7 +180,12 @@ def identify_device(
         "DEVICE_IDENTIFIED",
         examiner_id=current_examiner.id,
         case_id=case_id,
-        details={"manufacturer": ident.manufacturer, "model": ident.model, "imei": ident.imei},
+        details={
+            "at_ready": ident.at_ready,
+            "manufacturer": ident.manufacturer,
+            "model": ident.model,
+            "imei": ident.imei,
+        },
     )
 
     return DeviceIdentifyOut(
@@ -194,6 +202,7 @@ def identify_device(
         supported_sms_modes=ident.supported_sms_modes,
         capabilities=ident.capabilities,
         unsupported_commands=ident.unsupported_commands,
+        error_detail=ident.error_detail,
     )
 
 

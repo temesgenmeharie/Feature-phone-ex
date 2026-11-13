@@ -145,18 +145,26 @@ def generate_pdf_report(db: Session, acquisition: Acquisition, examiner: Examine
     # 8. SMS
     story.append(Paragraph(f"8. Extracted SMS Messages ({len(sms_list)})", h2))
     if sms_list:
-        s_rows = [["Idx", "Storage", "Status", "Party", "Content"]] + [
+        def _sms_parties(s):
+            remote = _safe(s.sender_or_recipient)
+            st = (s.status or "").upper()
+            if "STO" in st or "SENT" in st:
+                return "Device (Local)", remote
+            return remote, "Device (Local)"
+
+        s_rows = [["Idx", "Storage", "Status", "Sender", "Recipient", "Content"]] + [
             [
                 _safe(s.message_index),
                 s.storage_location,
                 _safe(s.status),
-                _safe(s.sender_or_recipient),
-                (s.content or "")[:80],
+                _sms_parties(s)[0],
+                _sms_parties(s)[1],
+                (s.content or "")[:70],
             ]
             for s in sms_list[:100]
         ]
-        t = Table(s_rows, colWidths=[35, 50, 75, 110, 260])
-        t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey), ("FONTSIZE", (0, 0), (-1, -1), 8)]))
+        t = Table(s_rows, colWidths=[30, 45, 60, 100, 100, 195])
+        t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey), ("FONTSIZE", (0, 0), (-1, -1), 7.5)]))
         story.append(t)
     else:
         story.append(Paragraph("No SMS messages extracted or category unsupported.", body))
@@ -164,19 +172,25 @@ def generate_pdf_report(db: Session, acquisition: Acquisition, examiner: Examine
     # 9. Call Records
     story.append(Paragraph(f"9. Extracted Call Records ({len(calls)})", h2))
     if calls:
-        call_rows = [["Type", "Storage", "Number", "Name", "Timestamp", "CDR-Level"]] + [
+        def _call_parties(c):
+            remote = f"{c.contact_name} ({c.phone_number})" if c.contact_name else c.phone_number
+            if c.call_type.value == "dialed":
+                return "Device (Local)", remote
+            return remote, "Device (Local)"
+
+        call_rows = [["Type", "Storage", "Sender", "Recipient", "Timestamp", "Duration"]] + [
             [
                 c.call_type.value,
                 c.storage_location,
-                c.phone_number,
-                _safe(c.contact_name),
+                _call_parties(c)[0],
+                _call_parties(c)[1],
                 _safe(c.timestamp_raw),
-                "Yes" if c.is_cdr_level else "No (Call Log)",
+                f"{c.duration_seconds}s" if c.duration_seconds is not None else "Unavailable",
             ]
             for c in calls[:100]
         ]
-        t = Table(call_rows, colWidths=[60, 50, 120, 120, 100, 80])
-        t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey), ("FONTSIZE", (0, 0), (-1, -1), 8)]))
+        t = Table(call_rows, colWidths=[55, 45, 120, 120, 110, 80])
+        t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey), ("FONTSIZE", (0, 0), (-1, -1), 7.5)]))
         story.append(t)
     else:
         story.append(Paragraph("No call records extracted or category unsupported.", body))
@@ -221,14 +235,21 @@ def export_csv_bundle(db: Session, acquisition: Acquisition, examiner: Examiner)
     out_path = Path(acquisition.evidence_dir) / f"export_{acquisition.acquisition_uid[:8]}.csv"
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["category", "storage", "index", "party_or_name", "phone_number", "status_or_type", "timestamp_raw", "content"])
+    writer.writerow(["category", "storage", "index", "sender", "recipient", "status_or_type", "timestamp_raw", "duration", "content"])
 
     for c in db.query(Contact).filter(Contact.acquisition_id == acquisition.id).all():
-        writer.writerow(["contact", c.storage_location, c.record_index, c.name or "", c.phone_number, c.number_type or "", "", ""])
+        writer.writerow(["contact", c.storage_location, c.record_index, c.name or "", c.phone_number, c.number_type or "", "", "", ""])
     for s in db.query(SmsMessage).filter(SmsMessage.acquisition_id == acquisition.id).all():
-        writer.writerow(["sms", s.storage_location, s.message_index, s.sender_or_recipient or "", "", s.status or "", s.timestamp_raw or "", s.content or ""])
+        st = (s.status or "").upper()
+        remote = s.sender_or_recipient or ""
+        sender = "Device (Local)" if ("STO" in st or "SENT" in st) else remote
+        recipient = remote if ("STO" in st or "SENT" in st) else "Device (Local)"
+        writer.writerow(["sms", s.storage_location, s.message_index, sender, recipient, s.status or "", s.timestamp_raw or "", "", s.content or ""])
     for r in db.query(CallRecord).filter(CallRecord.acquisition_id == acquisition.id).all():
-        writer.writerow(["call", r.storage_location, r.record_index, r.contact_name or "", r.phone_number, r.call_type.value, r.timestamp_raw or "", ""])
+        remote = f"{r.contact_name} ({r.phone_number})" if r.contact_name else r.phone_number
+        sender = "Device (Local)" if r.call_type.value == "dialed" else remote
+        recipient = remote if r.call_type.value == "dialed" else "Device (Local)"
+        writer.writerow(["call", r.storage_location, r.record_index, sender, recipient, r.call_type.value, r.timestamp_raw or "", r.duration_seconds or "", ""])
 
     out_path.write_text(buf.getvalue(), encoding="utf-8")
     ev_file = register_evidence_file(

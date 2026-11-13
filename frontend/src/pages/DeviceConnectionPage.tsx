@@ -596,25 +596,32 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                   <tr>
                     <th className="py-2.5 px-3">Call Type</th>
                     <th className="py-2.5 px-3">Storage</th>
-                    <th className="py-2.5 px-3">Phone Number</th>
-                    <th className="py-2.5 px-3">Contact Name</th>
+                    <th className="py-2.5 px-3">Sender (Calling Party)</th>
+                    <th className="py-2.5 px-3">Recipient (Called Party)</th>
                     <th className="py-2.5 px-3">Timestamp</th>
                     <th className="py-2.5 px-3">Duration</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {extractedCalls.map((c, i) => (
-                    <tr key={i} className="hover:bg-slate-900/40">
-                      <td className="py-2 px-3 font-semibold uppercase text-sky-300">{c.call_type}</td>
-                      <td className="py-2 px-3 font-mono text-slate-400">{c.storage_location}</td>
-                      <td className="py-2 px-3 font-mono text-slate-100">{c.phone_number}</td>
-                      <td className="py-2 px-3 text-slate-300">{c.contact_name || "Unavailable"}</td>
-                      <td className="py-2 px-3 text-slate-400">{c.timestamp_raw || "Unavailable"}</td>
-                      <td className="py-2 px-3 text-slate-400">
-                        {c.duration_seconds != null ? `${c.duration_seconds}s` : "Unavailable"}
-                      </td>
-                    </tr>
-                  ))}
+                  {extractedCalls.map((c, i) => {
+                    const remote = c.contact_name ? `${c.contact_name} (${c.phone_number})` : c.phone_number;
+                    const isDialed = c.call_type === "dialed";
+                    const sender = isDialed ? "Device (Local Handset)" : remote;
+                    const recipient = isDialed ? remote : "Device (Local Handset)";
+
+                    return (
+                      <tr key={i} className="hover:bg-slate-900/40">
+                        <td className="py-2 px-3 font-semibold uppercase text-sky-300">{c.call_type}</td>
+                        <td className="py-2 px-3 font-mono text-slate-400">{c.storage_location}</td>
+                        <td className="py-2 px-3 font-mono text-emerald-300">{sender}</td>
+                        <td className="py-2 px-3 font-mono text-cyan-300">{recipient}</td>
+                        <td className="py-2 px-3 text-slate-400">{c.timestamp_raw || "Unavailable"}</td>
+                        <td className="py-2 px-3 text-slate-400">
+                          {c.duration_seconds != null ? `${c.duration_seconds}s` : "Unavailable"}
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {extractedCalls.length === 0 && (
                     <tr>
                       <td colSpan={6} className="py-4 text-center text-slate-500">
@@ -632,24 +639,36 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                   <tr>
                     <th className="py-2.5 px-3">Storage</th>
                     <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3">Party (Sender/Recipient)</th>
+                    <th className="py-2.5 px-3">Sender (Originator)</th>
+                    <th className="py-2.5 px-3">Recipient (Destination)</th>
                     <th className="py-2.5 px-3">Timestamp</th>
                     <th className="py-2.5 px-3">Message Content</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {extractedMessages.map((m, i) => (
-                    <tr key={i} className="hover:bg-slate-900/40">
-                      <td className="py-2 px-3 font-mono text-slate-400">{m.storage_location}</td>
-                      <td className="py-2 px-3 font-medium text-sky-300">{m.status || "Unavailable"}</td>
-                      <td className="py-2 px-3 font-mono text-slate-100">{m.sender_or_recipient || "Unavailable"}</td>
-                      <td className="py-2 px-3 text-slate-400">{m.timestamp_raw || "Unavailable"}</td>
-                      <td className="py-2 px-3 text-slate-200">{m.content || "[Empty or PDU preserved]"}</td>
-                    </tr>
-                  ))}
+                  {extractedMessages.map((m, i) => {
+                    const remote = m.sender_or_recipient || "Unknown";
+                    const isOutbox =
+                      (m.status || "").toUpperCase().includes("STO") ||
+                      (m.status || "").toUpperCase().includes("SENT") ||
+                      (m.status || "").toUpperCase().includes("UNSENT");
+                    const sender = isOutbox ? "Device (Local Handset)" : remote;
+                    const recipient = isOutbox ? remote : "Device (Local Handset)";
+
+                    return (
+                      <tr key={i} className="hover:bg-slate-900/40">
+                        <td className="py-2 px-3 font-mono text-slate-400">{m.storage_location}</td>
+                        <td className="py-2 px-3 font-medium text-sky-300">{m.status || "Unavailable"}</td>
+                        <td className="py-2 px-3 font-mono text-emerald-300">{sender}</td>
+                        <td className="py-2 px-3 font-mono text-cyan-300">{recipient}</td>
+                        <td className="py-2 px-3 text-slate-400">{m.timestamp_raw || "Unavailable"}</td>
+                        <td className="py-2 px-3 text-slate-200">{m.content || "[Empty or PDU preserved]"}</td>
+                      </tr>
+                    );
+                  })}
                   {extractedMessages.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="py-4 text-center text-slate-500">
+                      <td colSpan={6} className="py-4 text-center text-slate-500">
                         No SMS messages extracted on this device.
                       </td>
                     </tr>

@@ -115,18 +115,36 @@ export function ResultsPage() {
         {tab === "sms" && (
           <table className="w-full text-left text-xs">
             <thead className="text-slate-400 border-b border-slate-800">
-              <tr><th className="py-2">Storage</th><th>Status</th><th>Party</th><th>Timestamp</th><th>Content</th></tr>
+              <tr>
+                <th className="py-2">Storage</th>
+                <th>Status</th>
+                <th>Sender (Originator)</th>
+                <th>Recipient (Destination)</th>
+                <th>Timestamp</th>
+                <th>Content</th>
+              </tr>
             </thead>
             <tbody>
-              {(sms?.items ?? []).map((m, i) => (
-                <tr key={i} className="border-b border-slate-800/50">
-                  <td className="py-2 font-mono">{String(m.storage_location)}</td>
-                  <td>{String(m.status ?? "Unavailable")}</td>
-                  <td className="font-mono">{String(m.sender_or_recipient ?? "Unavailable")}</td>
-                  <td>{String(m.timestamp_raw ?? "Unavailable")}</td>
-                  <td>{String(m.content ?? "")}</td>
-                </tr>
-              ))}
+              {(sms?.items ?? []).map((m, i) => {
+                const remote = String(m.sender_or_recipient ?? "Unavailable");
+                const isOutbox =
+                  String(m.status ?? "").toUpperCase().includes("STO") ||
+                  String(m.status ?? "").toUpperCase().includes("SENT") ||
+                  String(m.status ?? "").toUpperCase().includes("UNSENT");
+                const sender = isOutbox ? "Device (Local Handset)" : remote;
+                const recipient = isOutbox ? remote : "Device (Local Handset)";
+
+                return (
+                  <tr key={i} className="border-b border-slate-800/50">
+                    <td className="py-2 font-mono">{String(m.storage_location)}</td>
+                    <td>{String(m.status ?? "Unavailable")}</td>
+                    <td className="font-mono text-emerald-300">{sender}</td>
+                    <td className="font-mono text-cyan-300">{recipient}</td>
+                    <td>{String(m.timestamp_raw ?? "Unavailable")}</td>
+                    <td>{String(m.content ?? "")}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -136,18 +154,35 @@ export function ResultsPage() {
             <p className="text-xs text-amber-300">Note: Call records from AT+CPBR are limited handset call logs, not network-generated CDRs.</p>
             <table className="w-full text-left text-xs">
               <thead className="text-slate-400 border-b border-slate-800">
-                <tr><th className="py-2">Storage</th><th>Number</th><th>Name</th><th>Timestamp</th><th>Duration</th></tr>
+                <tr>
+                  <th className="py-2">Storage</th>
+                  <th>Call Type</th>
+                  <th>Sender (Caller)</th>
+                  <th>Recipient (Called)</th>
+                  <th>Timestamp</th>
+                  <th>Duration</th>
+                </tr>
               </thead>
               <tbody>
-                {(calls?.items ?? []).map((r, i) => (
-                  <tr key={i} className="border-b border-slate-800/50">
-                    <td className="py-2 font-mono">{String(r.storage_location)}</td>
-                    <td className="font-mono">{String(r.phone_number)}</td>
-                    <td>{String(r.contact_name ?? "Unavailable")}</td>
-                    <td>{String(r.timestamp_raw ?? "Unavailable")}</td>
-                    <td>{r.duration_seconds != null ? `${r.duration_seconds}s` : "Unavailable"}</td>
-                  </tr>
-                ))}
+                {(calls?.items ?? []).map((r, i) => {
+                  const number = String(r.phone_number);
+                  const name = r.contact_name ? String(r.contact_name) : null;
+                  const remote = name ? `${name} (${number})` : number;
+                  const isDialed = tab === "dialed" || r.call_type === "dialed";
+                  const sender = isDialed ? "Device (Local Handset)" : remote;
+                  const recipient = isDialed ? remote : "Device (Local Handset)";
+
+                  return (
+                    <tr key={i} className="border-b border-slate-800/50">
+                      <td className="py-2 font-mono">{String(r.storage_location)}</td>
+                      <td className="font-semibold uppercase text-sky-300">{tab}</td>
+                      <td className="font-mono text-emerald-300">{sender}</td>
+                      <td className="font-mono text-cyan-300">{recipient}</td>
+                      <td>{String(r.timestamp_raw ?? "Unavailable")}</td>
+                      <td>{r.duration_seconds != null ? `${r.duration_seconds}s` : "Unavailable"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -12,7 +12,7 @@ from app.db.session import get_db
 from app.extraction.identifier import DeviceIdentifier
 from app.models.forensics import ATCommandLog, Case, Device, Examiner
 from app.serial.manager import session_manager
-from app.serial.ports import list_available_ports
+from app.serial.ports import check_mass_storage_phone, list_available_ports
 from app.serial.transport import SerialTransportError
 from app.services.audit_service import record_audit_event
 
@@ -67,7 +67,18 @@ class DeviceIdentifyOut(BaseModel):
     error_detail: str | None = None
 
 
+class DiagnosticOut(BaseModel):
+    mass_storage_detected: bool = False
+    message: str | None = None
+
+
 _last_capabilities: dict[str, Any] = {}
+
+
+@router.get("/diagnostics", response_model=DiagnosticOut)
+def get_device_diagnostics(_: Examiner = Depends(get_current_examiner)) -> DiagnosticOut:
+    hint = check_mass_storage_phone()
+    return DiagnosticOut(mass_storage_detected=bool(hint), message=hint)
 
 
 @router.get("/ports", response_model=list[PortOut])

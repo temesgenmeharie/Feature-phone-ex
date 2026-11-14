@@ -67,6 +67,33 @@ def _classify_port(port_name: str, desc: str, hwid: str) -> tuple[str, bool, str
     return f"{port_name} — {desc}", False, "other"
 
 
+def check_mass_storage_phone() -> str | None:
+    """Detect if a feature phone chipset is connected in USB Mass Storage mode instead of COM mode."""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+
+        known_vendors = [
+            (r"SYSTEM\CurrentControlSet\Enum\USB\VID_1782&PID_4D01", "H-MOBILE / Spreadtrum (UNISOC) Feature Phone"),
+            (r"SYSTEM\CurrentControlSet\Enum\USB\VID_0E8D&PID_0003", "MediaTek Feature Phone"),
+            (r"SYSTEM\CurrentControlSet\Enum\USB\VID_0421", "Nokia Feature Phone"),
+        ]
+        for subkey_path, label in known_vendors:
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, subkey_path) as k:
+                    if winreg.QueryInfoKey(k)[0] > 0:
+                        return (
+                            f"{label} detected in USB Mass Storage mode. "
+                            "Unplug the USB cable, plug it back in, and select 'COM Port' / 'Modem' / 'PC Suite' on the phone screen."
+                        )
+            except OSError:
+                continue
+    except Exception:
+        pass
+    return None
+
+
 def list_available_ports(include_simulator: bool = False) -> list[PortInfo]:
     """Enumerate physical serial/COM ports and optionally the built-in simulated feature phone."""
     ports: list[PortInfo] = []

@@ -106,6 +106,18 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
     enabled: !!token,
   });
 
+  const { data: diagnostics, refetch: refetchDiagnostics } = useQuery({
+    queryKey: ["device-diagnostics"],
+    queryFn: () =>
+      apiFetch<{ mass_storage_detected: boolean; message: string | null }>("/devices/diagnostics", {}, token),
+    enabled: !!token,
+    refetchInterval: 3000,
+  });
+
+  async function handleRefreshAll() {
+    await Promise.all([refetchPorts(), refetchDiagnostics()]);
+  }
+
   useEffect(() => {
     if (ports.length > 0) {
       // Prioritize physical USB feature phone ports
@@ -208,7 +220,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
         }
         setError(
           res.error_detail ||
-            `No response from ${selectedPort}. Ensure your feature phone is powered ON, USB data cable is connected, and USB mode is set to 'COM Port / Modem / PC Suite'.`
+          `No response from ${selectedPort}. Ensure your feature phone is powered ON, USB data cable is connected, and USB mode is set to 'COM Port / Modem / PC Suite'.`
         );
       }
     } catch (e) {
@@ -254,7 +266,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
       } else {
         setError(
           res.error_detail ||
-            `Handset did not respond to AT commands on ${selectedPort}. Ensure phone is ON and set to 'COM Port / Modem / PC Suite'.`
+          `Handset did not respond to AT commands on ${selectedPort}. Ensure phone is ON and set to 'COM Port / Modem / PC Suite'.`
         );
       }
     } catch (e) {
@@ -355,7 +367,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
           </p>
         </div>
         <button
-          onClick={() => refetchPorts()}
+          onClick={handleRefreshAll}
           disabled={isRefreshingPorts}
           className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700 disabled:opacity-50"
         >
@@ -363,8 +375,31 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
         </button>
       </div>
 
+      {/* Phone detected in USB Storage Mode Banner */}
+      {diagnostics?.mass_storage_detected && (
+        <div className="rounded-xl border border-sky-500/50 bg-sky-950/40 p-4 text-xs text-sky-200 shadow-lg shadow-sky-950/40">
+          <div className="flex items-center gap-2 font-semibold text-sky-300 text-sm mb-1.5">
+            <Smartphone className="h-5 w-5 text-sky-400 shrink-0" />
+            Feature Phone Connected in Mass Storage Mode!
+          </div>
+          <p className="text-slate-200 font-medium">
+            {diagnostics.message}
+          </p>
+          <div className="mt-2.5 rounded bg-slate-900/80 p-3 border border-slate-800 text-slate-300 space-y-1">
+            <p className="font-semibold text-sky-300 text-xs uppercase tracking-wider">Required Action on Handset:</p>
+            <ol className="list-decimal list-inside space-y-1 text-xs">
+              <li>Unplug the USB cable from the phone.</li>
+              <li>Plug the USB cable back in.</li>
+              <li>When the USB popup appears on the phone screen, select <strong>"COM Port"</strong> (or <strong>"PC Suite" / "Modem"</strong>).</li>
+              <li>Do <strong>NOT</strong> select "Mass Storage" or "Charge Only".</li>
+              <li>Click <strong>"Refresh Ports"</strong> above once selected.</li>
+            </ol>
+          </div>
+        </div>
+      )}
+
       {/* No USB Phone Detected Guidance Banner */}
-      {!hasUsbPhoneDetected && !isSimulatorPort && (
+      {!hasUsbPhoneDetected && !isSimulatorPort && !diagnostics?.mass_storage_detected && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 text-xs text-amber-200">
           <div className="flex items-center gap-2 font-semibold text-amber-300 text-sm mb-1">
             <AlertTriangle className="h-4 w-4 text-amber-400" />
@@ -427,8 +462,8 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                 const badge = p.is_usb
                   ? "[USB PHONE]"
                   : p.is_simulated
-                  ? "[SIMULATOR]"
-                  : "[NO PHONE ATTACHED]";
+                    ? "[SIMULATOR]"
+                    : "[NO PHONE ATTACHED]";
                 return (
                   <option key={p.port_name} value={p.port_name}>
                     {badge} {p.description}
@@ -515,21 +550,20 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                 !status?.connected
                   ? "Connect a real feature phone first"
                   : !ident?.at_ready
-                  ? "Verify device AT responsiveness before extracting"
-                  : "Extract phone calls and SMS messages"
+                    ? "Verify device AT responsiveness before extracting"
+                    : "Extract phone calls and SMS messages"
               }
-              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
-                isDeviceActiveAndReady && !busy
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${isDeviceActiveAndReady && !busy
                   ? "bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-900/40"
                   : "bg-slate-800 text-slate-500 cursor-not-allowed opacity-50"
-              }`}
+                }`}
             >
               <PhoneCall className="h-4 w-4" />
               {busy
                 ? "Extracting..."
                 : isDeviceActiveAndReady
-                ? `Extract Calls & Messages (${phoneDisplayName})`
-                : "Extract Calls & Messages (Requires Active Device)"}
+                  ? `Extract Calls & Messages (${phoneDisplayName})`
+                  : "Extract Calls & Messages (Requires Active Device)"}
             </button>
           </div>
         </div>
@@ -539,19 +573,18 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-slate-200">2. Device Identification & Readiness</h3>
             <span
-              className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${
-                isDeviceActiveAndReady
+              className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${isDeviceActiveAndReady
                   ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
                   : status?.connected
-                  ? "bg-amber-950 text-amber-400 border border-amber-800"
-                  : "bg-slate-800 text-slate-400"
-              }`}
+                    ? "bg-amber-950 text-amber-400 border border-amber-800"
+                    : "bg-slate-800 text-slate-400"
+                }`}
             >
               {isDeviceActiveAndReady
                 ? "Ready For Extraction"
                 : status?.connected
-                ? "Port Open (Pending AT Handshake)"
-                : "Disconnected"}
+                  ? "Port Open (Pending AT Handshake)"
+                  : "Disconnected"}
             </span>
           </div>
 
@@ -665,17 +698,15 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
           <div className="flex gap-2">
             <button
               onClick={() => setActiveTab("calls")}
-              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
-                activeTab === "calls" ? "bg-indigo-600 text-white" : "bg-slate-950 text-slate-400 hover:bg-slate-800"
-              }`}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${activeTab === "calls" ? "bg-indigo-600 text-white" : "bg-slate-950 text-slate-400 hover:bg-slate-800"
+                }`}
             >
               <PhoneCall className="h-4 w-4" /> Call Records ({extractedCalls.length})
             </button>
             <button
               onClick={() => setActiveTab("messages")}
-              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
-                activeTab === "messages" ? "bg-indigo-600 text-white" : "bg-slate-950 text-slate-400 hover:bg-slate-800"
-              }`}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${activeTab === "messages" ? "bg-indigo-600 text-white" : "bg-slate-950 text-slate-400 hover:bg-slate-800"
+                }`}
             >
               <MessageSquare className="h-4 w-4" /> SMS Messages ({extractedMessages.length})
             </button>

@@ -377,23 +377,41 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
 
       {/* Phone detected in USB Storage Mode Banner */}
       {diagnostics?.mass_storage_detected && (
-        <div className="rounded-xl border border-sky-500/50 bg-sky-950/40 p-4 text-xs text-sky-200 shadow-lg shadow-sky-950/40">
-          <div className="flex items-center gap-2 font-semibold text-sky-300 text-sm mb-1.5">
+        <div className="rounded-xl border border-sky-500/50 bg-sky-950/40 p-5 text-xs text-sky-200 shadow-xl shadow-sky-950/50 space-y-3">
+          <div className="flex items-center gap-2 font-semibold text-sky-300 text-sm">
             <Smartphone className="h-5 w-5 text-sky-400 shrink-0" />
-            Feature Phone Connected in Mass Storage Mode!
+            <span>H-MOBILE / Spreadtrum Phone Detected in "U Disk" (Mass Storage) Mode</span>
           </div>
-          <p className="text-slate-200 font-medium">
-            {diagnostics.message}
+          <p className="text-slate-200 leading-relaxed">
+            Your phone screen displays <strong>"Charging"</strong> and <strong>"U disk"</strong> because its firmware default hides the AT modem. In "U disk" mode, the phone operates solely as a flash drive and AT command communication is blocked.
           </p>
-          <div className="mt-2.5 rounded bg-slate-900/80 p-3 border border-slate-800 text-slate-300 space-y-1">
-            <p className="font-semibold text-sky-300 text-xs uppercase tracking-wider">Required Action on Handset:</p>
-            <ol className="list-decimal list-inside space-y-1 text-xs">
-              <li>Unplug the USB cable from the phone.</li>
-              <li>Plug the USB cable back in.</li>
-              <li>When the USB popup appears on the phone screen, select <strong>"COM Port"</strong> (or <strong>"PC Suite" / "Modem"</strong>).</li>
-              <li>Do <strong>NOT</strong> select "Mass Storage" or "Charge Only".</li>
-              <li>Click <strong>"Refresh Ports"</strong> above once selected.</li>
-            </ol>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+            <div className="rounded-lg bg-slate-900/90 p-3.5 border border-slate-800 space-y-1.5">
+              <span className="font-semibold text-emerald-400 text-xs uppercase tracking-wider block">Option 1: Phone Menu / UART Setting</span>
+              <p className="text-slate-300 text-xs">
+                In the phone, open <strong>Menu &rarr; Settings &rarr; Phone Settings</strong> (or <em>Connectivity</em>). Look for <strong>"UART Settings"</strong> or <strong>"USB Mode"</strong> and change it from <em>"U-Disk"</em> to <em>"Modem"</em> or <em>"COM Port"</em>.
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-slate-900/90 p-3.5 border border-slate-800 space-y-1.5">
+              <span className="font-semibold text-amber-400 text-xs uppercase tracking-wider block">Option 2: Dialpad Secret Code</span>
+              <p className="text-slate-300 text-xs">
+                Unplug USB, go to the dial screen, and type <strong>*#83781#</strong> (or <strong>*#66#</strong>). If Engineer Mode opens, navigate to <em>Debug&Log &rarr; USB</em> and switch to <em>Serial Port / Modem</em>.
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-slate-900/90 p-3.5 border border-slate-800 space-y-1.5">
+              <span className="font-semibold text-cyan-400 text-xs uppercase tracking-wider block">Option 3: Forensic Boot-Key Combo</span>
+              <p className="text-slate-300 text-xs">
+                Power OFF the phone (pull battery for 5s, put back). Press and <strong>HOLD</strong> the center <strong>OK</strong> key (or Call key), and plug in the USB cable. Windows will detect the chip as a Spreadtrum COM port.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-1 border-t border-slate-800/80 text-xs text-slate-400">
+            <span>After switching, click <strong>"Refresh Ports"</strong> above.</span>
+            <span className="text-indigo-300 font-medium">To test extraction immediately, check <em>"Enable Lab Simulator"</em> on the right.</span>
           </div>
         </div>
       )}
@@ -554,8 +572,8 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                     : "Extract phone calls and SMS messages"
               }
               className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${isDeviceActiveAndReady && !busy
-                  ? "bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-900/40"
-                  : "bg-slate-800 text-slate-500 cursor-not-allowed opacity-50"
+                ? "bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-900/40"
+                : "bg-slate-800 text-slate-500 cursor-not-allowed opacity-50"
                 }`}
             >
               <PhoneCall className="h-4 w-4" />
@@ -574,10 +592,10 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
             <h3 className="font-semibold text-slate-200">2. Device Identification & Readiness</h3>
             <span
               className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${isDeviceActiveAndReady
-                  ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
-                  : status?.connected
-                    ? "bg-amber-950 text-amber-400 border border-amber-800"
-                    : "bg-slate-800 text-slate-400"
+                ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
+                : status?.connected
+                  ? "bg-amber-950 text-amber-400 border border-amber-800"
+                  : "bg-slate-800 text-slate-400"
                 }`}
             >
               {isDeviceActiveAndReady

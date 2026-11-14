@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Download,
   FileSpreadsheet,
@@ -12,6 +13,7 @@ import {
   RefreshCw,
   SearchCheck,
   ShieldCheck,
+  Smartphone,
   Unplug,
 } from "lucide-react";
 import { apiFetch, getDownloadUrl } from "../lib/api";
@@ -83,6 +85,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
   const { token, activeCaseId, setActiveCaseId, setActiveDeviceId, setActiveAcquisitionId } = useLabStore();
   const [selectedPort, setSelectedPort] = useState("");
   const [baudRate, setBaudRate] = useState(115200);
+  const [includeSimulator, setIncludeSimulator] = useState(false);
   const [simProfile, setSimProfile] = useState("nokia_105_lab");
   const [ident, setIdent] = useState<IdentifyResult | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -96,18 +99,23 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
   const [activeTab, setActiveTab] = useState<"calls" | "messages">("calls");
   const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
 
-  const { data: ports = [], refetch: refetchPorts } = useQuery({
-    queryKey: ["ports"],
-    queryFn: () => apiFetch<PortInfo[]>("/devices/ports", {}, token),
+  const { data: ports = [], refetch: refetchPorts, isFetching: isRefreshingPorts } = useQuery({
+    queryKey: ["ports", includeSimulator],
+    queryFn: () =>
+      apiFetch<PortInfo[]>(`/devices/ports?include_simulator=${includeSimulator}`, {}, token),
     enabled: !!token,
   });
 
   useEffect(() => {
-    if (!selectedPort && ports.length > 0) {
-      // Prefer USB phone port if present, otherwise simulator, otherwise first available
+    if (ports.length > 0) {
+      // Prioritize physical USB feature phone ports
       const usbPort = ports.find((p) => p.is_usb);
-      const chosen = usbPort ?? ports.find((p) => p.is_simulated) ?? ports[0];
-      setSelectedPort(chosen.port_name);
+      if (usbPort) {
+        setSelectedPort(usbPort.port_name);
+      } else if (!selectedPort || !ports.some((p) => p.port_name === selectedPort)) {
+        // Fallback to first port if current selected is invalid
+        setSelectedPort(ports[0].port_name);
+      }
     }
   }, [ports, selectedPort]);
 
@@ -119,9 +127,12 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
 
   const selectedPortInfo = ports.find((p) => p.port_name === selectedPort);
   const isSimulatorPort = selectedPort.startsWith("SIM://");
-  const isMotherboardPort = selectedPortInfo?.port_type === "motherboard" || selectedPortInfo?.hwid.includes("PNP0501");
+  const isMotherboardPort =
+    selectedPortInfo?.port_type === "motherboard" ||
+    (selectedPortInfo?.hwid || "").includes("PNP0501");
+  const hasUsbPhoneDetected = ports.some((p) => p.is_usb);
 
-  // Device is considered active and ready only if port is connected AND responded to AT
+  // Device is considered active and ready ONLY if port is connected, responded to AT, and registered with device_id
   const isDeviceActiveAndReady = Boolean(status?.connected && ident?.at_ready && ident?.device_id);
 
   async function ensureCaseId(): Promise<number> {
@@ -134,7 +145,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
         body: JSON.stringify({
           case_number: `CASE-${stamp}`,
           title: "Feature Phone Direct Acquisition",
-          purpose: "Logical extraction of calls and messages",
+          purpose: "Forensic extraction of call history and SMS messages",
         }),
       },
       token
@@ -143,11 +154,21 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
     return created.id;
   }
 
-  async function handleConnect() {
+  // Connect and immediately perform the AT verification handshake
+  async function handleConnectAndVerify() {
     setMsg(null);
     setError(null);
     setIdent(null);
+    setBusy(true);
+
     try {
+      if (isMotherboardPort && !isSimulatorPort) {
+        throw new Error(
+          `${selectedPort} is an internal motherboard serial port with no feature phone attached. Please connect your phone via USB cable.`
+        );
+      }
+
+      // Step 1: Open the serial transport
       await apiFetch(
         "/devices/connect",
         {
@@ -162,15 +183,45 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
         token
       );
       await qc.invalidateQueries({ queryKey: ["device-status"] });
-      setMsg(`Port ${selectedPort} opened. Click 'Identify Device' to test AT responsiveness.`);
+
+      // Step 2: Immediate AT Handshake & Identification
+      const caseId = await ensureCaseId();
+      const res = await apiFetch<IdentifyResult>(
+        "/devices/identify",
+        { method: "POST", body: JSON.stringify({ case_id: caseId }) },
+        token
+      );
+
+      setIdent(res);
+
+      if (res.at_ready && res.device_id) {
+        setActiveDeviceId(res.device_id);
+        const phoneName = [res.manufacturer, res.model].filter(Boolean).join(" ") || "Compatible Feature Phone";
+        setMsg(`Device connected & AT verified: ${phoneName} (IMEI: ${res.imei || "Unavailable"}). Ready for extraction.`);
+      } else {
+        // Safe disconnect if phone did not respond to AT
+        try {
+          await apiFetch("/devices/disconnect", { method: "POST" }, token);
+          await qc.invalidateQueries({ queryKey: ["device-status"] });
+        } catch {
+          // ignore disconnect error
+        }
+        setError(
+          res.error_detail ||
+            `No response from ${selectedPort}. Ensure your feature phone is powered ON, USB data cable is connected, and USB mode is set to 'COM Port / Modem / PC Suite'.`
+        );
+      }
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function handleDisconnect() {
     setMsg(null);
     setError(null);
+    setBusy(true);
     try {
       await apiFetch("/devices/disconnect", { method: "POST" }, token);
       setIdent(null);
@@ -178,10 +229,13 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
       setMsg("Device disconnected safely.");
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function handleIdentify() {
+    if (!status?.connected) return;
     setMsg(null);
     setError(null);
     setBusy(true);
@@ -196,11 +250,11 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
       if (res.at_ready && res.device_id) {
         setActiveDeviceId(res.device_id);
         const name = [res.manufacturer, res.model].filter(Boolean).join(" ") || "Compatible Feature Phone";
-        setMsg(`Device ready: ${name} (IMEI: ${res.imei || "Unavailable"})`);
+        setMsg(`Device verified: ${name} (IMEI: ${res.imei || "Unavailable"})`);
       } else {
         setError(
           res.error_detail ||
-            `No response from ${selectedPort}. Ensure your feature phone is powered ON, USB cable supports data, and USB mode is set to 'COM Port / Modem / PC Suite'.`
+            `Handset did not respond to AT commands on ${selectedPort}. Ensure phone is ON and set to 'COM Port / Modem / PC Suite'.`
         );
       }
     } catch (e) {
@@ -216,7 +270,9 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
     setBusy(true);
     try {
       if (!isDeviceActiveAndReady || !ident?.device_id) {
-        throw new Error("Cannot extract: device is not active and verified. Please connect and identify the device first.");
+        throw new Error(
+          "Cannot extract: device is not active and verified. Please connect a responsive feature phone first."
+        );
       }
       const caseId = await ensureCaseId();
 
@@ -250,7 +306,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
       setExtractedMessages(smsRes.items || []);
 
       setMsg(
-        `Extraction finished (${acq.status}): ${callsRes.items?.length || 0} call records and ${smsRes.items?.length || 0} messages extracted.`
+        `Extraction completed (${acq.status}): ${callsRes.items?.length || 0} call logs and ${smsRes.items?.length || 0} SMS messages acquired with SHA-256 evidence integrity.`
       );
     } catch (e) {
       setError((e as Error).message);
@@ -285,64 +341,76 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
     }
   }
 
+  const phoneDisplayName = ident?.at_ready
+    ? [ident.manufacturer, ident.model].filter(Boolean).join(" ") || "Real Feature Phone"
+    : null;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold">Device Connection & Extraction</h2>
+          <h2 className="text-2xl font-semibold">Device Connection & Acquisition</h2>
           <p className="text-sm text-slate-400">
-            Detect real USB feature phones, verify AT readiness, and extract calls and messages into forensic reports
+            Connect real USB feature phones (Nokia, Tecno, Itel, Samsung), verify AT responsiveness, and extract call logs & SMS messages
           </p>
         </div>
         <button
           onClick={() => refetchPorts()}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700"
+          disabled={isRefreshingPorts}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700 disabled:opacity-50"
         >
-          <RefreshCw className="h-4 w-4" /> Refresh Ports
+          <RefreshCw className={`h-4 w-4 ${isRefreshingPorts ? "animate-spin" : ""}`} /> Refresh Ports
         </button>
       </div>
 
-      {isMotherboardPort && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-800 bg-amber-950/50 p-3 text-xs text-amber-200">
-          <AlertCircle className="h-4 w-4 flex-shrink-0 text-amber-400 mt-0.5" />
-          <div>
-            <p className="font-semibold">Notice: {selectedPort} is an onboard motherboard serial port (no phone attached).</p>
-            <p className="text-amber-300/80">
-              Plug your feature phone (Nokia, Tecno, Itel, Samsung) into the PC via a USB data cable, select{" "}
-              <strong>"COM Port / Modem / PC Suite"</strong> on the phone screen, and click <strong>Refresh Ports</strong>.
-              For lab testing without a physical phone, you can also select the <strong>Simulated Feature Phone</strong>.
-            </p>
+      {/* No USB Phone Detected Guidance Banner */}
+      {!hasUsbPhoneDetected && !isSimulatorPort && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 text-xs text-amber-200">
+          <div className="flex items-center gap-2 font-semibold text-amber-300 text-sm mb-1">
+            <AlertTriangle className="h-4 w-4 text-amber-400" />
+            No Real USB Feature Phone Detected
           </div>
+          <p>
+            Please connect your feature phone (Nokia, Tecno, Itel, Samsung, etc.) using a <strong>USB data cable</strong> and select <strong>"COM Port / Modem / PC Suite"</strong> on the phone screen.
+          </p>
+          <p className="mt-1 text-amber-300/70">
+            Note: <code>COM1</code> is an internal motherboard serial port with no phone attached. Real feature phones appear with a <code>[USB PHONE]</code> tag once connected.
+          </p>
         </div>
       )}
 
-      {error && (
-        <div className="flex items-center gap-2 rounded-lg border border-rose-800 bg-rose-950/60 px-4 py-2 text-sm text-rose-200">
-          <AlertCircle className="h-4 w-4 flex-shrink-0" />
-          <span>{error}</span>
+      {/* Success Notification */}
+      {msg && (
+        <div className="flex items-center gap-2 rounded-lg bg-emerald-950 border border-emerald-800 px-4 py-3 text-sm text-emerald-300">
+          <CheckCircle2 className="h-5 w-5 shrink-0" />
+          <span>{msg}</span>
         </div>
       )}
-      {msg && (
-        <div className="flex items-center justify-between rounded-lg border border-sky-800 bg-sky-950/60 px-4 py-2 text-sm text-sky-200">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            <span>{msg}</span>
-          </div>
-          {onNavigateResults && extractedAcqId && (
-            <button
-              onClick={onNavigateResults}
-              className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500"
-            >
-              Full Results View
-            </button>
-          )}
+
+      {/* Error Notification */}
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg bg-rose-950 border border-rose-800 px-4 py-3 text-sm text-rose-300">
+          <AlertCircle className="h-5 w-5 shrink-0" />
+          <span>{error}</span>
         </div>
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Connection Box */}
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-5 space-y-4">
-          <h3 className="font-semibold text-slate-200">1. Serial Port Configuration</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-slate-200">1. Serial / COM Port Configuration</h3>
+            <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeSimulator}
+                onChange={(e) => setIncludeSimulator(e.target.checked)}
+                className="rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-0"
+              />
+              <span>Enable Lab Simulator</span>
+            </label>
+          </div>
+
           <div>
             <label className="block text-xs text-slate-400 mb-1">Select Port</label>
             <select
@@ -356,14 +424,24 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
               className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
             >
               {ports.map((p) => {
-                const badge = p.is_usb ? "[USB PHONE]" : p.is_simulated ? "[SIMULATOR]" : "[MOTHERBOARD]";
+                const badge = p.is_usb
+                  ? "[USB PHONE]"
+                  : p.is_simulated
+                  ? "[SIMULATOR]"
+                  : "[NO PHONE ATTACHED]";
                 return (
                   <option key={p.port_name} value={p.port_name}>
                     {badge} {p.description}
                   </option>
                 );
               })}
+              {ports.length === 0 && <option value="">No COM ports detected</option>}
             </select>
+            {isMotherboardPort && (
+              <p className="mt-1 text-xs text-amber-400">
+                ⚠️ {selectedPort} is an internal motherboard port without a phone attached.
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -396,42 +474,48 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
             )}
           </div>
 
-          <div className="flex flex-wrap gap-2 pt-2">
+          <div className="flex flex-wrap items-center gap-2 pt-2">
             {!status?.connected ? (
               <button
-                onClick={handleConnect}
-                disabled={busy || !selectedPort}
-                className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-500 disabled:opacity-40"
+                onClick={handleConnectAndVerify}
+                disabled={busy || !selectedPort || (isMotherboardPort && !isSimulatorPort)}
+                title={
+                  isMotherboardPort && !isSimulatorPort
+                    ? "COM1 is a motherboard port. Connect a real USB feature phone."
+                    : "Connect to serial port and verify AT handshake"
+                }
+                className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-500 disabled:opacity-40 shadow-sm"
               >
-                <Plug className="h-4 w-4" /> Connect Port
+                <Plug className="h-4 w-4" /> {busy ? "Connecting..." : "Connect & Verify Device"}
               </button>
             ) : (
-              <button
-                onClick={handleDisconnect}
-                disabled={busy}
-                className="inline-flex items-center gap-2 rounded-lg bg-rose-700 px-4 py-2 text-sm font-medium hover:bg-rose-600 disabled:opacity-40"
-              >
-                <Unplug className="h-4 w-4" /> Disconnect
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDisconnect}
+                  disabled={busy}
+                  className="inline-flex items-center gap-2 rounded-lg bg-rose-700 px-4 py-2 text-sm font-medium hover:bg-rose-600 disabled:opacity-40"
+                >
+                  <Unplug className="h-4 w-4" /> Disconnect
+                </button>
+                <button
+                  onClick={handleIdentify}
+                  disabled={busy}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium disabled:opacity-40 hover:bg-emerald-500"
+                >
+                  <SearchCheck className="h-4 w-4" /> {busy ? "Probing..." : "Re-Identify"}
+                </button>
+              </div>
             )}
 
-            <button
-              onClick={handleIdentify}
-              disabled={busy || !status?.connected}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium disabled:opacity-40 hover:bg-emerald-500"
-            >
-              <SearchCheck className="h-4 w-4" /> {busy ? "Probing..." : "Identify Device"}
-            </button>
-
-            {/* Extraction button: Active ONLY when device is verified and AT-ready */}
+            {/* Extraction button: strictly active ONLY when device is verified and AT-ready */}
             <button
               onClick={handleExtractCallsAndMessages}
               disabled={busy || !isDeviceActiveAndReady}
               title={
                 !status?.connected
-                  ? "Connect to a port first"
+                  ? "Connect a real feature phone first"
                   : !ident?.at_ready
-                  ? "Click 'Identify Device' to verify the phone is responding before extracting"
+                  ? "Verify device AT responsiveness before extracting"
                   : "Extract phone calls and SMS messages"
               }
               className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
@@ -444,7 +528,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
               {busy
                 ? "Extracting..."
                 : isDeviceActiveAndReady
-                ? "Extract Calls & Messages"
+                ? `Extract Calls & Messages (${phoneDisplayName})`
                 : "Extract Calls & Messages (Requires Active Device)"}
             </button>
           </div>
@@ -466,22 +550,30 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
               {isDeviceActiveAndReady
                 ? "Ready For Extraction"
                 : status?.connected
-                ? "Connected (Pending Identification)"
+                ? "Port Open (Pending AT Handshake)"
                 : "Disconnected"}
             </span>
           </div>
 
           <div className="text-sm space-y-1.5 text-slate-300">
             <p>
-              Port Connection:{" "}
-              <span className={status?.connected ? "text-emerald-400 font-mono" : "text-slate-500"}>
-                {status?.connected ? `Connected (${status.port_name})` : "Disconnected"}
-              </span>
+              Port Status:{" "}
+              {isDeviceActiveAndReady ? (
+                <span className="text-emerald-400 font-mono font-semibold">
+                  Connected & Verified ({status?.port_name})
+                </span>
+              ) : status?.connected ? (
+                <span className="text-amber-400 font-mono">
+                  Port Open ({status?.port_name}) — Awaiting AT Response
+                </span>
+              ) : (
+                <span className="text-slate-500 font-mono">Disconnected</span>
+              )}
             </p>
             <p>
               Manufacturer:{" "}
               <span className="font-mono font-semibold text-sky-300">
-                {ident?.manufacturer || "Unavailable (Identify device first)"}
+                {ident?.manufacturer || (isMotherboardPort ? "Unavailable (No handset on COM1)" : "Unavailable (Connect device)")}
               </span>
             </p>
             <p>
@@ -531,8 +623,9 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
             <div>
-              <h3 className="text-lg font-semibold text-slate-100">
-                3. Extracted Evidence Records (Acquisition #{extractedAcqId})
+              <h3 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
+                <Smartphone className="h-5 w-5 text-indigo-400" />
+                3. Extracted Evidence Records — {phoneDisplayName || "Acquisition"} (#{extractedAcqId})
               </h3>
               <p className="text-xs text-slate-400">
                 {extractedCalls.length} call log entries and {extractedMessages.length} messages acquired and preserved with SHA-256 integrity
@@ -600,6 +693,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                     <th className="py-2.5 px-3">Recipient (Called Party)</th>
                     <th className="py-2.5 px-3">Timestamp</th>
                     <th className="py-2.5 px-3">Duration</th>
+                    <th className="py-2.5 px-3">Handset Log Source</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
@@ -619,12 +713,13 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                         <td className="py-2 px-3 text-slate-400">
                           {c.duration_seconds != null ? `${c.duration_seconds}s` : "Unavailable"}
                         </td>
+                        <td className="py-2 px-3 text-slate-500 italic">Handset Non-Volatile Memory</td>
                       </tr>
                     );
                   })}
                   {extractedCalls.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="py-4 text-center text-slate-500">
+                      <td colSpan={7} className="py-4 text-center text-slate-500">
                         No call records extracted on this device.
                       </td>
                     </tr>

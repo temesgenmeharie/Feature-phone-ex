@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -71,8 +71,11 @@ _last_capabilities: dict[str, Any] = {}
 
 
 @router.get("/ports", response_model=list[PortOut])
-def get_ports(_: Examiner = Depends(get_current_examiner)) -> list[PortOut]:
-    return [PortOut(**p.__dict__) for p in list_available_ports(include_simulator=True)]
+def get_ports(
+    include_simulator: bool = Query(default=False),
+    _: Examiner = Depends(get_current_examiner),
+) -> list[PortOut]:
+    return [PortOut(**p.__dict__) for p in list_available_ports(include_simulator=include_simulator)]
 
 
 @router.post("/connect", response_model=ConnectionStatusOut)

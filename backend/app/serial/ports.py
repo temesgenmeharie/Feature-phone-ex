@@ -67,7 +67,7 @@ def _classify_port(port_name: str, desc: str, hwid: str) -> tuple[str, bool, str
     return f"{port_name} — {desc}", False, "other"
 
 
-def list_available_ports(include_simulator: bool = True) -> list[PortInfo]:
+def list_available_ports(include_simulator: bool = False) -> list[PortInfo]:
     """Enumerate physical serial/COM ports and optionally the built-in simulated feature phone."""
     ports: list[PortInfo] = []
     seen: set[str] = set()

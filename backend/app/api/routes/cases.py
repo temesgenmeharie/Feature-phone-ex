@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_examiner
+from app.api.deps import get_current_examiner, require_admin
 from app.db.session import get_db
 from app.models.forensics import Case, CaseStatus, Examiner
 from app.schemas import CaseCreate, CaseOut, CaseUpdate
@@ -98,3 +98,42 @@ def update_case(
     )
     return CaseOut.model_validate(case)
 
+
+@router.post("/purge-all", status_code=status.HTTP_200_OK)
+def purge_all_records(
+    db: Session = Depends(get_db),
+    admin: Examiner = Depends(require_admin),
+) -> dict[str, str]:
+    """Admin-only: purge all cases, acquisitions, and extracted records."""
+    from app.models.forensics import (
+        Acquisition,
+        ATCommandLog,
+        CallRecord,
+        Contact,
+        Device,
+        EvidenceFile,
+        EvidenceHash,
+        ExtractionTask,
+        SmsMessage,
+    )
+    for model in (
+        EvidenceHash,
+        EvidenceFile,
+        Contact,
+        SmsMessage,
+        CallRecord,
+        ExtractionTask,
+        ATCommandLog,
+        Acquisition,
+        Device,
+        Case,
+    ):
+        db.query(model).delete()
+    db.commit()
+    record_audit_event(
+        db,
+        "PURGE_ALL_RECORDS",
+        examiner_id=admin.id,
+        details={"action": "All cases, acquisitions, and extracted evidence purged."},
+    )
+    return {"message": "All examination cases, devices, acquisitions, and extracted records have been cleared."}

@@ -48,8 +48,8 @@ def _classify_port(port_name: str, desc: str, hwid: str) -> tuple[str, bool, str
 
     # Check for motherboard/legacy onboard UART (e.g., ACPI\PNP0501)
     if "PNP0501" in hwid_upper or "ACPI\\" in hwid_upper:
-        clean_desc = f"{port_name} — Motherboard Serial Port (No Phone Attached)"
-        return clean_desc, False, "motherboard"
+        clean_desc = f"{port_name} — Serial Port ({desc})"
+        return clean_desc, False, "serial_port"
 
     # Check for USB Phone / Modem
     is_usb = bool(

@@ -174,12 +174,6 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
     setBusy(true);
 
     try {
-      if (isMotherboardPort && !isSimulatorPort) {
-        throw new Error(
-          `${selectedPort} is an internal motherboard serial port with no feature phone attached. Please connect your phone via USB cable.`
-        );
-      }
-
       // Step 1: Open the serial transport
       await apiFetch(
         "/devices/connect",
@@ -211,16 +205,9 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
         const phoneName = [res.manufacturer, res.model].filter(Boolean).join(" ") || "Compatible Feature Phone";
         setMsg(`Device connected & AT verified: ${phoneName} (IMEI: ${res.imei || "Unavailable"}). Ready for extraction.`);
       } else {
-        // Safe disconnect if phone did not respond to AT
-        try {
-          await apiFetch("/devices/disconnect", { method: "POST" }, token);
-          await qc.invalidateQueries({ queryKey: ["device-status"] });
-        } catch {
-          // ignore disconnect error
-        }
         setError(
           res.error_detail ||
-          `No response from ${selectedPort}. Ensure your feature phone is powered ON, USB data cable is connected, and USB mode is set to 'COM Port / Modem / PC Suite'.`
+            `Port ${selectedPort} opened, but no response to AT commands. Ensure your feature phone is powered ON, unlocked, and set to 'COM Port / Modem / PC Suite' mode.`
         );
       }
     } catch (e) {
@@ -281,12 +268,26 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
     setError(null);
     setBusy(true);
     try {
-      if (!isDeviceActiveAndReady || !ident?.device_id) {
-        throw new Error(
-          "Cannot extract: device is not active and verified. Please connect a responsive feature phone first."
-        );
-      }
       const caseId = await ensureCaseId();
+      let deviceId = ident?.device_id;
+
+      if (!deviceId) {
+        // Auto-probe and register device on the active port
+        const idRes = await apiFetch<IdentifyResult>(
+          "/devices/identify",
+          { method: "POST", body: JSON.stringify({ case_id: caseId }) },
+          token
+        );
+        setIdent(idRes);
+        deviceId = idRes.device_id;
+        if (!deviceId) {
+          throw new Error(
+            idRes.error_detail ||
+              "Cannot extract: Handset did not respond with 'OK' to AT commands on this port. Ensure phone is ON and in 'COM Port / Modem / PC Suite' mode."
+          );
+        }
+        setActiveDeviceId(deviceId);
+      }
 
       const acq = await apiFetch<AcquisitionOut>(
         "/acquisitions",
@@ -294,7 +295,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
           method: "POST",
           body: JSON.stringify({
             case_id: caseId,
-            device_id: ident.device_id,
+            device_id: deviceId,
             categories: ["device_info", "contacts", "sms", "call_history"],
           }),
         },
@@ -481,7 +482,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                   ? "[USB PHONE]"
                   : p.is_simulated
                     ? "[SIMULATOR]"
-                    : "[NO PHONE ATTACHED]";
+                    : "[SERIAL PORT]";
                 return (
                   <option key={p.port_name} value={p.port_name}>
                     {badge} {p.description}
@@ -490,11 +491,6 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
               })}
               {ports.length === 0 && <option value="">No COM ports detected</option>}
             </select>
-            {isMotherboardPort && (
-              <p className="mt-1 text-xs text-amber-400">
-                ⚠️ {selectedPort} is an internal motherboard port without a phone attached.
-              </p>
-            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -531,12 +527,8 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
             {!status?.connected ? (
               <button
                 onClick={handleConnectAndVerify}
-                disabled={busy || !selectedPort || (isMotherboardPort && !isSimulatorPort)}
-                title={
-                  isMotherboardPort && !isSimulatorPort
-                    ? "COM1 is a motherboard port. Connect a real USB feature phone."
-                    : "Connect to serial port and verify AT handshake"
-                }
+                disabled={busy || !selectedPort}
+                title="Connect to serial port and verify AT handshake"
                 className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium hover:bg-sky-500 disabled:opacity-40 shadow-sm"
               >
                 <Plug className="h-4 w-4" /> {busy ? "Connecting..." : "Connect & Verify Device"}
@@ -560,18 +552,16 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
               </div>
             )}
 
-            {/* Extraction button: strictly active ONLY when device is verified and AT-ready */}
+            {/* Extraction button: active when connected */}
             <button
               onClick={handleExtractCallsAndMessages}
-              disabled={busy || !isDeviceActiveAndReady}
+              disabled={busy || !status?.connected}
               title={
                 !status?.connected
-                  ? "Connect a real feature phone first"
-                  : !ident?.at_ready
-                    ? "Verify device AT responsiveness before extracting"
-                    : "Extract phone calls and SMS messages"
+                  ? "Connect a serial port first"
+                  : "Extract phone calls and SMS messages"
               }
-              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${isDeviceActiveAndReady && !busy
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${status?.connected && !busy
                 ? "bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-900/40"
                 : "bg-slate-800 text-slate-500 cursor-not-allowed opacity-50"
                 }`}
@@ -579,9 +569,10 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
               <PhoneCall className="h-4 w-4" />
               {busy
                 ? "Extracting..."
-                : isDeviceActiveAndReady
-                  ? `Extract Calls & Messages (${phoneDisplayName})`
-                  : "Extract Calls & Messages (Requires Active Device)"}
+                : status?.connected
+                  ? phoneDisplayName ? `Extract Calls & Messages (${phoneDisplayName})` : "Extract Calls & Messages"
+                  : "Extract Calls & Messages (Connect Port First)"}
+            </button>
             </button>
           </div>
         </div>

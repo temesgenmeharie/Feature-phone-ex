@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 import re
+import time
 from typing import Any
 
 from app.extraction.interfaces import CapabilityResult, CapabilityStatus, ExtractionCategory
@@ -36,19 +37,34 @@ class DeviceIdentifier:
     def identify_and_probe(self, engine: ATCommandEngine) -> DeviceIdentificationResult:
         res = DeviceIdentificationResult(at_ready=False)
 
-        # 1. Disable echo if supported (non-destructive)
-        try:
-            ate0 = engine.send_command("ATE0", timeout_s=1.5)
-            res.raw_responses["ATE0"] = ate0.raw_response
-        except Exception:
-            pass
+        # 1. Wake up modem and disable echo if supported
+        at_ok = False
+        for _ in range(3):
+            try:
+                ate0 = engine.send_command("ATE0", timeout_s=1.0)
+                res.raw_responses["ATE0"] = ate0.raw_response
+            except Exception:
+                pass
+            at_check = engine.send_command("AT", timeout_s=1.5)
+            res.raw_responses["AT"] = at_check.raw_response
+            if at_check.is_ok:
+                at_ok = True
+                break
+            time.sleep(0.25)
 
-        # 2. Critical AT handshake
-        at_check = engine.send_command("AT", timeout_s=2.0)
-        res.raw_responses["AT"] = at_check.raw_response
-        res.at_ready = at_check.is_ok
+        # Fallback to ATI
+        if not at_ok:
+            try:
+                ati = engine.send_command("ATI", timeout_s=1.5)
+                res.raw_responses["ATI"] = ati.raw_response
+                if ati.is_ok:
+                    at_ok = True
+            except Exception:
+                pass
 
-        if not at_check.is_ok:
+        res.at_ready = at_ok
+
+        if not at_ok:
             res.unsupported_commands.append("AT")
             res.error_detail = (
                 f"No feature phone responded to AT commands on {engine.transport.port_name}. "
@@ -79,11 +95,11 @@ class DeviceIdentifier:
                     res.unsupported_commands.append(cmd)
             return None
 
-        # 3. Retrieve real device manufacturer, model, revision, and IMEI
-        res.manufacturer = query_chain(("AT+GMI", "AT+CGMI", "ATI"))
-        res.model = query_chain(("AT+GMM", "AT+CGMM", "ATI"))
-        res.firmware_revision = query_chain(("AT+GMR", "AT+CGMR"))
-        res.imei = query_chain(("AT+GSN", "AT+CGSN"))
+        # 3. Retrieve real device manufacturer, model, revision, and IMEI (supports MTK/Tecno AT+EGMR)
+        res.manufacturer = query_chain(("AT+GMI", "AT+CGMI", "ATI")) or "Detected Feature Phone"
+        res.model = query_chain(("AT+GMM", "AT+CGMM", "ATI")) or "AT-Compatible Handset"
+        res.firmware_revision = query_chain(("AT+GMR", "AT+CGMR")) or "Generic Revision"
+        res.imei = query_chain(("AT+GSN", "AT+CGSN", "AT+EGMR=0,7")) or "Unavailable"
 
         # SIM PIN status
         cpin_res = engine.send_command("AT+CPIN?", timeout_s=2.0)

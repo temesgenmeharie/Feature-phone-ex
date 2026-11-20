@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
+import time
 import uuid
 
 from sqlalchemy.orm import Session
@@ -51,9 +52,24 @@ class ExtractionOrchestrator:
         evidence_dir = Path(settings.evidence_dir) / f"case_{case_id}" / f"acq_{acq_uid}"
         evidence_dir.mkdir(parents=True, exist_ok=True)
 
-        # Pre-flight check: ensure the connected port actually responds to AT
-        handshake = engine.send_command("AT", timeout_s=2.0)
-        if not handshake.is_ok:
+        # Pre-flight check: wake up phone modem and ensure the connected port responds to AT
+        handshake_ok = False
+        for _ in range(3):
+            handshake = engine.send_command("AT", timeout_s=1.5)
+            if handshake.is_ok:
+                handshake_ok = True
+                break
+            time.sleep(0.25)
+
+        if not handshake_ok:
+            try:
+                fallback = engine.send_command("ATI", timeout_s=1.5)
+                if fallback.is_ok:
+                    handshake_ok = True
+            except Exception:
+                pass
+
+        if not handshake_ok:
             raise SerialTransportError(
                 f"Cannot extract data: No responsive feature phone detected on port {engine.transport.port_name}. "
                 "The port did not reply to AT commands. Please connect an authorized feature phone, power it on, "

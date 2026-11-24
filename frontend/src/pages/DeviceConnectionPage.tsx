@@ -573,7 +573,6 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                   ? phoneDisplayName ? `Extract Calls & Messages (${phoneDisplayName})` : "Extract Calls & Messages"
                   : "Extract Calls & Messages (Connect Port First)"}
             </button>
-            </button>
           </div>
         </div>
 

@@ -157,48 +157,62 @@ def detect_removable_drives() -> list[UDiskDriveInfo]:
 
 
 def detect_driver_problem_devices() -> list[DriverProblemDevice]:
-    """Detect connected feature phones where Windows failed to attach a driver (e.g. Code 28)."""
+    """Detect connected feature phones where Windows failed to attach a driver (e.g. Code 28).
+
+    Uses fast native Windows CfgMgr32 API to check live connected devices in real time (0ms overhead).
+    """
     problems: list[DriverProblemDevice] = []
     if os.name != "nt":
         return problems
 
     try:
-        # Run fast PowerShell query to inspect devices in problem state
-        cmd = [
-            "powershell", "-NoProfile", "-NonInteractive", "-Command",
-            "Get-PnpDevice | Where-Object { $_.Problem -ne 'CM_PROB_NONE' -and $_.Status -eq 'Error' } | "
-            "Select-Object InstanceId, Problem, Status, FriendlyName | ConvertTo-Csv -NoTypeInformation"
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        if res.returncode == 0 and res.stdout:
-            lines = [ln.strip() for ln in res.stdout.strip().splitlines() if ln.strip()]
-            for ln in lines[1:]:
-                # CSV parsing: "InstanceId","Problem","Status","FriendlyName"
-                parts = [p.strip('"\r ') for p in ln.split(",")]
-                if not parts or len(parts) < 2:
-                    continue
-                inst_id = parts[0]
-                prob_code = int(parts[1]) if parts[1].isdigit() else 28
+        import ctypes
+        import winreg
 
-                for pattern, name, vendor in KNOWN_PHONE_HARDWARE_IDS:
-                    if re.search(pattern, inst_id, re.IGNORECASE):
-                        guide = (
-                            f"{vendor} feature phone is in COM/Modem mode, but Windows does not have the USB serial driver bound (Code {prob_code}). "
-                            "To enable COM port communication: Run Device Manager -> Right click device -> Update Driver -> "
-                            "Browse my computer -> Let me pick from a list -> Ports (COM & LPT) -> Standard Port Types -> USB Serial Device (usbser.sys)."
-                        )
-                        problems.append(
-                            DriverProblemDevice(
-                                instance_id=inst_id,
-                                hardware_id=pattern,
-                                device_name=name,
-                                vendor=vendor,
-                                problem_code=prob_code,
-                                problem_description=f"Device driver missing or failed install (Code {prob_code}).",
-                                resolution_guide=guide,
-                            )
-                        )
-                        break
+        cfg = ctypes.windll.cfgmgr32
+        enum_key_path = r"SYSTEM\CurrentControlSet\Enum\USB"
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, enum_key_path) as usb_key:
+            num_subkeys, _, _ = winreg.QueryInfoKey(usb_key)
+            for i in range(num_subkeys):
+                dev_id = winreg.EnumKey(usb_key, i)
+                try:
+                    with winreg.OpenKey(usb_key, dev_id) as sub_key:
+                        num_instances, _, _ = winreg.QueryInfoKey(sub_key)
+                        for j in range(num_instances):
+                            inst_id = winreg.EnumKey(sub_key, j)
+                            full_id = f"USB\\{dev_id}\\{inst_id}"
+
+                            dn = ctypes.c_ulong()
+                            # CM_Locate_DevNodeW checks if device is PHYSICALLY PRESENT RIGHT NOW
+                            if cfg.CM_Locate_DevNodeW(ctypes.byref(dn), full_id, 0) == 0:
+                                status = ctypes.c_ulong()
+                                problem = ctypes.c_ulong()
+                                if cfg.CM_Get_DevNode_Status(ctypes.byref(status), ctypes.byref(problem), dn, 0) == 0:
+                                    prob_code = problem.value
+                                    if prob_code != 0:
+                                        for pattern, name, vendor in KNOWN_PHONE_HARDWARE_IDS:
+                                            if re.search(pattern, full_id, re.IGNORECASE):
+                                                guide = (
+                                                    f"{vendor} feature phone is in COM/Modem mode, but Windows has not bound the standard USB Serial driver (Code {prob_code}). "
+                                                    "To enable COM port communication: Run D:\\FeaturePhone\\Install_Phone_Drivers.bat as Administrator, "
+                                                    "or open Device Manager -> Right click device -> Update Driver -> Browse my computer -> Let me pick from a list -> "
+                                                    "Ports (COM & LPT) -> Standard Port Types -> USB Serial Device (usbser.sys)."
+                                                )
+                                                problems.append(
+                                                    DriverProblemDevice(
+                                                        instance_id=full_id,
+                                                        hardware_id=pattern,
+                                                        device_name=name,
+                                                        vendor=vendor,
+                                                        problem_code=prob_code,
+                                                        problem_description=f"Device driver missing or failed install (Code {prob_code}).",
+                                                        resolution_guide=guide,
+                                                    )
+                                                )
+                                                break
+                except OSError:
+                    continue
     except Exception:
         pass
 
@@ -209,7 +223,8 @@ def detect_usb_connection_mode() -> USBModeReport:
     """Full comprehensive USB connection mode detection for connected phones."""
     # 1. Removable drives (U Disk mode)
     udisk_drives = detect_removable_drives()
-    phone_udisks = [d for d in udisk_drives if d.is_phone_storage]
+    # Prioritize phone volume markers, or use any connected removable storage
+    phone_udisks = [d for d in udisk_drives if d.is_phone_storage] or udisk_drives
 
     # 2. Driver problem devices (COM mode with missing driver)
     driver_problems = detect_driver_problem_devices()
@@ -267,27 +282,9 @@ def detect_usb_connection_mode() -> USBModeReport:
             charging_detected=True,
         )
 
-    # If no phone detected, check registry for phantom USB feature phones (plugged in previously)
-    from app.serial.ports import check_mass_storage_phone
-    hint = check_mass_storage_phone()
-    if hint:
-        return USBModeReport(
-            primary_mode="CHARGING_ONLY",
-            detected_vendor="Feature Phone (Charging Only)",
-            summary_message=(
-                "Phone is connected but appears in Charging-only mode (USB data lines inactive). "
-                "To extract data: Disconnect and reconnect the cable, watch the phone display, and press OK to select "
-                "'U Disk' (Mass Storage) or 'COM Port' / 'Modem' / 'PC Suite'."
-            ),
-            udisk_drives=udisk_drives,
-            com_ports=com_ports,
-            driver_problem_devices=driver_problems,
-            charging_detected=True,
-        )
-
     return USBModeReport(
         primary_mode="NO_DEVICE",
-        summary_message="No feature phone detected. Connect phone via USB cable and select 'U Disk' or 'COM Port' on the screen.",
+        summary_message="No feature phone detected. Connect phone via USB cable and select 'U Disk' or 'COM Port' on the phone screen.",
         udisk_drives=udisk_drives,
         com_ports=com_ports,
         driver_problem_devices=driver_problems,

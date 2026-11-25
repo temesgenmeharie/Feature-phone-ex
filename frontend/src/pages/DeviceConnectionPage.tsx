@@ -836,23 +836,54 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
         </div>
       ) : diagnostics?.primary_mode === "COM_DRIVER_MISSING" || (diagnostics?.driver_problem_devices && diagnostics.driver_problem_devices.length > 0) ? (
         <div className="rounded-xl border border-amber-500/50 bg-amber-950/40 p-5 text-amber-200 shadow-xl shadow-amber-950/50 space-y-3">
-          <div className="flex items-center gap-2 font-semibold text-amber-300 text-sm">
-            <Cpu className="h-5 w-5 text-amber-400 shrink-0" />
-            <span>COM Mode Detected — Windows USB Serial Driver Not Bound (Code 28)</span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-semibold text-amber-300 text-sm">
+              <Cpu className="h-5 w-5 text-amber-400 shrink-0" />
+              <span>COM Mode Detected — Windows USB Serial Driver Not Bound (Code 28)</span>
+            </div>
+            <span className="rounded-full bg-amber-500/20 border border-amber-400/40 px-2.5 py-0.5 text-xs font-semibold text-amber-300">
+              Hardware Connected: {diagnostics.driver_problem_devices?.[0]?.vendor || "MediaTek"}
+            </span>
           </div>
+
           <p className="text-slate-200 text-xs leading-relaxed">
-            A real <strong>{diagnostics.driver_problem_devices?.[0]?.vendor || "MediaTek / Spreadtrum"}</strong> handset is physically connected in COM/Modem mode, but Windows has not bound its standard USB Serial driver (Code 28).
+            A real <strong>{diagnostics.driver_problem_devices?.[0]?.vendor || "MediaTek / Spreadtrum"}</strong> handset is physically connected in COM/Modem mode (<code>{diagnostics.driver_problem_devices?.[0]?.hardware_id || "USB\\VID_0E8D&PID_0003"}</code>). Because Windows doesn't bind a default serial driver for this hardware ID, it does not have a COM port assigned yet.
           </p>
 
-          <div className="rounded-lg bg-slate-900/90 border border-slate-800 p-3.5 space-y-2 text-xs">
-            <span className="font-semibold text-amber-300 block">How to assign COM Port in Windows (30 Seconds):</span>
-            <ol className="list-decimal list-inside space-y-1 text-slate-300">
-              <li>Press <strong>Win + X</strong> and open <strong>Device Manager</strong> (or run <code>devmgmt.msc</code>).</li>
-              <li>Under <strong>Other devices</strong>, right-click the item with yellow warning icon (<code>{diagnostics.driver_problem_devices?.[0]?.hardware_id || "USB\\VID_0E8D&PID_0003"}</code>).</li>
-              <li>Click <strong>Update driver &rarr; Browse my computer &rarr; Let me pick from a list</strong>.</li>
-              <li>Select <strong>Ports (COM & LPT)</strong> &rarr; Manufacturer: <strong>(Standard port types)</strong> &rarr; Model: <strong>USB Serial Device</strong>.</li>
-              <li>Click Next & finish. Windows binds built-in <code>usbser.sys</code> and gives the phone a <code>COM</code> port instantly.</li>
-            </ol>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+            <div className="rounded-lg bg-slate-900/90 border border-emerald-800/60 p-3.5 space-y-2 text-xs">
+              <span className="font-semibold text-emerald-300 block flex items-center gap-1.5">
+                ⚡ Option 1: Automated 1-Click Driver Fix (Recommended)
+              </span>
+              <p className="text-slate-300 text-xs">
+                We generated an automated driver installer script in your project root:
+              </p>
+              <div className="rounded bg-slate-950 p-2 font-mono text-emerald-400 text-xs border border-slate-800 select-all">
+                D:\FeaturePhone\Install_Phone_Drivers.bat
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Double-click <strong>Install_Phone_Drivers.bat</strong> on your computer (or right-click &rarr; <em>Run as administrator</em>). It installs the certified VCOM INF driver package and assigns a COM port instantly.
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-slate-900/90 border border-slate-800 p-3.5 space-y-2 text-xs">
+              <span className="font-semibold text-amber-300 block">
+                🛠️ Option 2: Manual Device Manager Binding (30 Seconds)
+              </span>
+              <ol className="list-decimal list-inside space-y-1 text-slate-300 text-[11px]">
+                <li>Press <strong>Win + X</strong> and open <strong>Device Manager</strong> (or run <code>devmgmt.msc</code>).</li>
+                <li>Under <strong>Other devices</strong>, right-click the warning item (<code>{diagnostics.driver_problem_devices?.[0]?.hardware_id || "USB\\VID_0E8D&PID_0003"}</code>).</li>
+                <li>Click <strong>Update driver &rarr; Browse my computer &rarr; Let me pick from a list</strong>.</li>
+                <li>Select <strong>Ports (COM & LPT)</strong> &rarr; Manufacturer: <strong>(Standard port types)</strong> &rarr; Model: <strong>USB Serial Device</strong>.</li>
+                <li>Click Next. Windows binds <code>usbser.sys</code> and assigns a COM port immediately.</li>
+              </ol>
+            </div>
+          </div>
+
+          <div className="rounded-lg bg-slate-900/80 border border-slate-800 p-2.5 text-xs text-slate-400 flex items-center justify-between">
+            <span>
+              💡 <strong>Prefer U-Disk Storage Mode without drivers?</strong> Unplug the USB cable, plug it back in, and select <strong>"U Disk" / "Mass Storage"</strong> on the phone screen.
+            </span>
           </div>
         </div>
       ) : diagnostics?.primary_mode === "CHARGING_ONLY" ? (

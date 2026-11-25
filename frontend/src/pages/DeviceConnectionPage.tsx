@@ -4,9 +4,12 @@ import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
+  Cpu,
   Download,
   FileSpreadsheet,
   FileText,
+  FolderTree,
+  HardDrive,
   MessageSquare,
   PhoneCall,
   Plug,
@@ -15,6 +18,7 @@ import {
   ShieldCheck,
   Smartphone,
   Unplug,
+  Usb,
 } from "lucide-react";
 import { apiFetch, getDownloadUrl } from "../lib/api";
 import { useLabStore } from "../store/useAuthStore";
@@ -47,6 +51,38 @@ interface IdentifyResult {
   capabilities: Record<string, { status: string; notes?: string }>;
   unsupported_commands: string[];
   error_detail?: string | null;
+}
+
+interface UDiskDrive {
+  drive_letter: string;
+  volume_name: string;
+  filesystem: string;
+  total_bytes: number;
+  free_bytes: number;
+  phone_vendor: string | null;
+  detected_folders: string[];
+  is_phone_storage: boolean;
+}
+
+interface DriverProblem {
+  instance_id: string;
+  hardware_id: string;
+  device_name: string;
+  vendor: string;
+  problem_code: number;
+  problem_description: string;
+  resolution_guide: string;
+}
+
+interface DiagnosticReport {
+  primary_mode: "COM" | "UDISK" | "COM_DRIVER_MISSING" | "ADB" | "CHARGING_ONLY" | "NO_DEVICE";
+  detected_vendor: string | null;
+  summary_message: string;
+  udisk_drives: UDiskDrive[];
+  driver_problem_devices: DriverProblem[];
+  charging_detected: boolean;
+  mass_storage_detected: boolean;
+  message: string | null;
 }
 
 interface AcquisitionOut {
@@ -99,6 +135,8 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
   const [activeTab, setActiveTab] = useState<"calls" | "messages">("calls");
   const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
 
+  const [selectedUDisk, setSelectedUDisk] = useState<string>("");
+
   const { data: ports = [], refetch: refetchPorts, isFetching: isRefreshingPorts } = useQuery({
     queryKey: ["ports", includeSimulator],
     queryFn: () =>
@@ -109,10 +147,75 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
   const { data: diagnostics, refetch: refetchDiagnostics } = useQuery({
     queryKey: ["device-diagnostics"],
     queryFn: () =>
-      apiFetch<{ mass_storage_detected: boolean; message: string | null }>("/devices/diagnostics", {}, token),
+      apiFetch<DiagnosticReport>("/devices/diagnostics", {}, token),
     enabled: !!token,
     refetchInterval: 3000,
   });
+
+  useEffect(() => {
+    if (diagnostics?.udisk_drives && diagnostics.udisk_drives.length > 0 && !selectedUDisk) {
+      setSelectedUDisk(diagnostics.udisk_drives[0].drive_letter);
+    }
+  }, [diagnostics, selectedUDisk]);
+
+  async function handleExtractUDisk(targetDrive?: string) {
+    const drive = targetDrive || selectedUDisk || (diagnostics?.udisk_drives?.[0]?.drive_letter);
+    if (!drive) {
+      setError("Please select a valid U-Disk phone storage drive.");
+      return;
+    }
+    setError(null);
+    setMsg(null);
+    setBusy(true);
+    try {
+      const caseId = await ensureCaseId();
+      const res = await apiFetch<{
+        status: string;
+        acquisition_id: number;
+        acquisition_uid: string;
+        categories_extracted: string[];
+      }>(
+        "/devices/udisk/extract",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            case_id: caseId,
+            drive_letter: drive,
+            categories: ["device_info", "contacts", "sms", "call_history"],
+          }),
+        },
+        token
+      );
+
+      setActiveAcquisitionId(res.acquisition_id);
+      setExtractedAcqId(res.acquisition_id);
+
+      // Fetch extracted records directly
+      const callsRes = await apiFetch<{ items: ExtractedCall[] }>(
+        `/acquisitions/${res.acquisition_id}/calls?limit=200`,
+        {},
+        token
+      );
+      const smsRes = await apiFetch<{ items: ExtractedSms[] }>(
+        `/acquisitions/${res.acquisition_id}/sms?limit=200`,
+        {},
+        token
+      );
+      setExtractedCalls(callsRes.items || []);
+      setExtractedMessages(smsRes.items || []);
+
+      const carvedSmsCount = (smsRes.items || []).filter((s) => s.status === "DELETED_RECOVERED").length;
+      const carvedCallsCount = (callsRes.items || []).filter((c) => c.storage_location?.includes("CARVED")).length;
+
+      setMsg(
+        `U-Disk Forensic Extraction completed successfully from ${drive}! Acquired ${callsRes.items?.length || 0} call logs (${carvedCallsCount} carved/deleted) and ${smsRes.items?.length || 0} SMS messages (${carvedSmsCount} carved/deleted) with SHA-256 evidence vault integrity.`
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleRefreshAll() {
     await Promise.all([refetchPorts(), refetchDiagnostics()]);
@@ -376,59 +479,112 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
         </button>
       </div>
 
-      {/* Phone detected in USB Storage Mode Banner */}
-      {diagnostics?.mass_storage_detected && (
+      {/* USB Connection Mode Hub */}
+      {diagnostics?.primary_mode === "UDISK" || (diagnostics?.udisk_drives && diagnostics.udisk_drives.length > 0) ? (
+        <div className="rounded-xl border border-emerald-500/50 bg-emerald-950/40 p-5 text-emerald-200 shadow-xl shadow-emerald-950/50 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-semibold text-emerald-300 text-base">
+              <HardDrive className="h-5 w-5 text-emerald-400 shrink-0" />
+              <span>U Disk (USB Mass Storage) Mode Detected</span>
+            </div>
+            <span className="rounded-full bg-emerald-500/20 border border-emerald-400/40 px-3 py-1 text-xs font-semibold text-emerald-300 uppercase tracking-wide">
+              Ready For Extraction
+            </span>
+          </div>
+
+          <p className="text-slate-200 text-xs leading-relaxed">
+            The handset is connected and mounted as USB storage. The system can directly extract call logs, text messages, vCards, and perform <strong>forensic carving</strong> for deleted SMS PDUs and erased call records.
+          </p>
+
+          <div className="rounded-lg bg-slate-900/90 border border-slate-800 p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="text-xs text-slate-400 block">Detected Phone Volume:</span>
+                <span className="font-mono text-sm font-semibold text-emerald-400">
+                  {diagnostics.udisk_drives?.[0]?.drive_letter || selectedUDisk || "E:"} ({diagnostics.udisk_drives?.[0]?.phone_vendor || diagnostics.detected_vendor || "Feature Phone Storage"})
+                </span>
+                <span className="text-xs text-slate-400 block mt-0.5">
+                  Filesystem: {diagnostics.udisk_drives?.[0]?.filesystem || "FAT"} | Volume Label: {diagnostics.udisk_drives?.[0]?.volume_name || "REMOVABLE"}
+                </span>
+              </div>
+
+              <button
+                onClick={() => handleExtractUDisk(diagnostics.udisk_drives?.[0]?.drive_letter || selectedUDisk)}
+                disabled={busy}
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 shadow-lg shadow-emerald-900/40 transition disabled:opacity-50"
+              >
+                <FolderTree className="h-4 w-4" />
+                {busy ? "Extracting Storage..." : "Extract Phone Storage (Active & Carved Records)"}
+              </button>
+            </div>
+
+            {diagnostics.udisk_drives?.[0]?.detected_folders && diagnostics.udisk_drives[0].detected_folders.length > 0 && (
+              <div className="flex items-center gap-2 pt-2 border-t border-slate-800 text-xs text-slate-400">
+                <span className="font-semibold text-slate-300">Detected Folders/Files:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {diagnostics.udisk_drives[0].detected_folders.map((f) => (
+                    <span key={f} className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-300">
+                      {f}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : diagnostics?.primary_mode === "COM_DRIVER_MISSING" || (diagnostics?.driver_problem_devices && diagnostics.driver_problem_devices.length > 0) ? (
+        <div className="rounded-xl border border-amber-500/50 bg-amber-950/40 p-5 text-amber-200 shadow-xl shadow-amber-950/50 space-y-3">
+          <div className="flex items-center gap-2 font-semibold text-amber-300 text-sm">
+            <Cpu className="h-5 w-5 text-amber-400 shrink-0" />
+            <span>COM Mode Detected — Windows USB Serial Driver Not Bound (Code 28)</span>
+          </div>
+          <p className="text-slate-200 text-xs leading-relaxed">
+            A real <strong>{diagnostics.driver_problem_devices?.[0]?.vendor || "MediaTek / Spreadtrum"}</strong> handset is physically connected in COM/Modem mode, but Windows has not bound its standard USB Serial driver (Code 28).
+          </p>
+
+          <div className="rounded-lg bg-slate-900/90 border border-slate-800 p-3.5 space-y-2 text-xs">
+            <span className="font-semibold text-amber-300 block">How to assign COM Port in Windows (30 Seconds):</span>
+            <ol className="list-decimal list-inside space-y-1 text-slate-300">
+              <li>Press <strong>Win + X</strong> and open <strong>Device Manager</strong> (or run <code>devmgmt.msc</code>).</li>
+              <li>Under <strong>Other devices</strong>, right-click the item with yellow warning icon (<code>{diagnostics.driver_problem_devices?.[0]?.hardware_id || "USB\\VID_0E8D&PID_0003"}</code>).</li>
+              <li>Click <strong>Update driver &rarr; Browse my computer &rarr; Let me pick from a list</strong>.</li>
+              <li>Select <strong>Ports (COM & LPT)</strong> &rarr; Manufacturer: <strong>(Standard port types)</strong> &rarr; Model: <strong>USB Serial Device</strong>.</li>
+              <li>Click Next & finish. Windows binds built-in <code>usbser.sys</code> and gives the phone a <code>COM</code> port instantly.</li>
+            </ol>
+          </div>
+        </div>
+      ) : diagnostics?.primary_mode === "CHARGING_ONLY" ? (
         <div className="rounded-xl border border-sky-500/50 bg-sky-950/40 p-5 text-xs text-sky-200 shadow-xl shadow-sky-950/50 space-y-3">
           <div className="flex items-center gap-2 font-semibold text-sky-300 text-sm">
             <Smartphone className="h-5 w-5 text-sky-400 shrink-0" />
-            <span>H-MOBILE / Spreadtrum Phone Detected in "U Disk" (Mass Storage) Mode</span>
+            <span>Phone Connected in Charging-Only Mode</span>
           </div>
           <p className="text-slate-200 leading-relaxed">
-            Your phone screen displays <strong>"Charging"</strong> and <strong>"U disk"</strong> because its firmware default hides the AT modem. In "U disk" mode, the phone operates solely as a flash drive and AT command communication is blocked.
+            The phone is drawing power, but USB data lines are inactive. To extract data:
           </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
-            <div className="rounded-lg bg-slate-900/90 p-3.5 border border-slate-800 space-y-1.5">
-              <span className="font-semibold text-emerald-400 text-xs uppercase tracking-wider block">Option 1: Phone Menu / UART Setting</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+            <div className="rounded-lg bg-slate-900/90 p-3 border border-slate-800">
+              <span className="font-semibold text-emerald-400 block mb-1">To Extract via U-Disk Mode:</span>
               <p className="text-slate-300 text-xs">
-                In the phone, open <strong>Menu &rarr; Settings &rarr; Phone Settings</strong> (or <em>Connectivity</em>). Look for <strong>"UART Settings"</strong> or <strong>"USB Mode"</strong> and change it from <em>"U-Disk"</em> to <em>"Modem"</em> or <em>"COM Port"</em>.
+                Unplug and re-plug the cable. When the phone screen lights up with options, press the OK/center key to select <strong>"U Disk" / "Storage"</strong>.
               </p>
             </div>
-
-            <div className="rounded-lg bg-slate-900/90 p-3.5 border border-slate-800 space-y-1.5">
-              <span className="font-semibold text-amber-400 text-xs uppercase tracking-wider block">Option 2: Dialpad Secret Code</span>
+            <div className="rounded-lg bg-slate-900/90 p-3 border border-slate-800">
+              <span className="font-semibold text-cyan-400 block mb-1">To Extract via COM Port Mode:</span>
               <p className="text-slate-300 text-xs">
-                Unplug USB, go to the dial screen, and type <strong>*#83781#</strong> (or <strong>*#66#</strong>). If Engineer Mode opens, navigate to <em>Debug&Log &rarr; USB</em> and switch to <em>Serial Port / Modem</em>.
+                In phone menu, go to <strong>Settings &rarr; Phone Settings &rarr; UART / USB Mode</strong> and choose <strong>"COM Port" / "Modem"</strong>.
               </p>
             </div>
-
-            <div className="rounded-lg bg-slate-900/90 p-3.5 border border-slate-800 space-y-1.5">
-              <span className="font-semibold text-cyan-400 text-xs uppercase tracking-wider block">Option 3: Forensic Boot-Key Combo</span>
-              <p className="text-slate-300 text-xs">
-                Power OFF the phone (pull battery for 5s, put back). Press and <strong>HOLD</strong> the center <strong>OK</strong> key (or Call key), and plug in the USB cable. Windows will detect the chip as a Spreadtrum COM port.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-1 border-t border-slate-800/80 text-xs text-slate-400">
-            <span>After switching, click <strong>"Refresh Ports"</strong> above.</span>
-            <span className="text-indigo-300 font-medium">To test extraction immediately, check <em>"Enable Lab Simulator"</em> on the right.</span>
           </div>
         </div>
-      )}
-
-      {/* No USB Phone Detected Guidance Banner */}
-      {!hasUsbPhoneDetected && !isSimulatorPort && !diagnostics?.mass_storage_detected && (
+      ) : !hasUsbPhoneDetected && !isSimulatorPort && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 text-xs text-amber-200">
           <div className="flex items-center gap-2 font-semibold text-amber-300 text-sm mb-1">
             <AlertTriangle className="h-4 w-4 text-amber-400" />
             No Real USB Feature Phone Detected
           </div>
           <p>
-            Please connect your feature phone (Nokia, Tecno, Itel, Samsung, etc.) using a <strong>USB data cable</strong> and select <strong>"COM Port / Modem / PC Suite"</strong> on the phone screen.
-          </p>
-          <p className="mt-1 text-amber-300/70">
-            Note: <code>COM1</code> is an internal motherboard serial port with no phone attached. Real feature phones appear with a <code>[USB PHONE]</code> tag once connected.
+            Please connect your feature phone (Nokia, Tecno, Itel, Samsung, etc.) using a <strong>USB data cable</strong> and select <strong>"U Disk"</strong> or <strong>"COM Port / Modem"</strong> on the phone screen.
           </p>
         </div>
       )}
@@ -745,7 +901,15 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                     return (
                       <tr key={i} className="hover:bg-slate-900/40">
                         <td className="py-2 px-3 font-semibold uppercase text-sky-300">{c.call_type}</td>
-                        <td className="py-2 px-3 font-mono text-slate-400">{c.storage_location}</td>
+                        <td className="py-2 px-3 font-mono text-slate-400">
+                          {c.storage_location?.includes("CARVED") ? (
+                            <span className="inline-flex items-center gap-1 rounded bg-purple-950 border border-purple-800 px-1.5 py-0.5 text-[11px] font-semibold text-purple-300">
+                              🛡️ CARVED DELETED
+                            </span>
+                          ) : (
+                            c.storage_location
+                          )}
+                        </td>
                         <td className="py-2 px-3 font-mono text-emerald-300">{sender}</td>
                         <td className="py-2 px-3 font-mono text-cyan-300">{recipient}</td>
                         <td className="py-2 px-3 text-slate-400">{c.timestamp_raw || "Unavailable"}</td>
@@ -789,10 +953,20 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                     const sender = isOutbox ? "Device (Local Handset)" : remote;
                     const recipient = isOutbox ? remote : "Device (Local Handset)";
 
+                    const isDeleted = m.status === "DELETED_RECOVERED";
+
                     return (
                       <tr key={i} className="hover:bg-slate-900/40">
                         <td className="py-2 px-3 font-mono text-slate-400">{m.storage_location}</td>
-                        <td className="py-2 px-3 font-medium text-sky-300">{m.status || "Unavailable"}</td>
+                        <td className="py-2 px-3 font-medium">
+                          {isDeleted ? (
+                            <span className="inline-flex items-center gap-1 rounded bg-purple-950 border border-purple-800 px-2 py-0.5 text-[11px] font-semibold text-purple-300">
+                              🛡️ DELETED (RECOVERED)
+                            </span>
+                          ) : (
+                            <span className="text-sky-300">{m.status || "Unavailable"}</span>
+                          )}
+                        </td>
                         <td className="py-2 px-3 font-mono text-emerald-300">{sender}</td>
                         <td className="py-2 px-3 font-mono text-cyan-300">{recipient}</td>
                         <td className="py-2 px-3 text-slate-400">{m.timestamp_raw || "Unavailable"}</td>

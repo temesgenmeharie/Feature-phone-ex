@@ -10,7 +10,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_examiner
 from app.db.session import get_db
 from app.extraction.identifier import DeviceIdentifier
+from app.extraction.interfaces import ExtractionCategory
+from app.extraction.orchestrator import ExtractionOrchestrator
 from app.models.forensics import ATCommandLog, Case, Device, Examiner
+from app.serial.detector import detect_usb_connection_mode, detect_removable_drives, detect_driver_problem_devices
 from app.serial.manager import session_manager
 from app.serial.ports import check_mass_storage_phone, list_available_ports
 from app.serial.transport import SerialTransportError
@@ -67,18 +70,130 @@ class DeviceIdentifyOut(BaseModel):
     error_detail: str | None = None
 
 
+class UDiskDriveOut(BaseModel):
+    drive_letter: str
+    volume_name: str
+    filesystem: str
+    total_bytes: int
+    free_bytes: int
+    phone_vendor: str | None = None
+    detected_folders: list[str] = []
+    is_phone_storage: bool = False
+
+
+class DriverProblemOut(BaseModel):
+    instance_id: str
+    hardware_id: str
+    device_name: str
+    vendor: str
+    problem_code: int
+    problem_description: str
+    resolution_guide: str
+
+
 class DiagnosticOut(BaseModel):
+    primary_mode: str = "NO_DEVICE"
+    detected_vendor: str | None = None
+    summary_message: str = ""
+    udisk_drives: list[UDiskDriveOut] = []
+    driver_problem_devices: list[DriverProblemOut] = []
+    charging_detected: bool = False
     mass_storage_detected: bool = False
     message: str | None = None
 
 
+class UDiskExtractRequest(BaseModel):
+    case_id: int
+    drive_letter: str
+    categories: list[ExtractionCategory] = [
+        ExtractionCategory.DEVICE_INFO,
+        ExtractionCategory.CONTACTS,
+        ExtractionCategory.SMS,
+        ExtractionCategory.CALL_HISTORY,
+    ]
+
+
 _last_capabilities: dict[str, Any] = {}
+_orchestrator = ExtractionOrchestrator()
 
 
 @router.get("/diagnostics", response_model=DiagnosticOut)
 def get_device_diagnostics(_: Examiner = Depends(get_current_examiner)) -> DiagnosticOut:
-    hint = check_mass_storage_phone()
-    return DiagnosticOut(mass_storage_detected=bool(hint), message=hint)
+    report = detect_usb_connection_mode()
+    hint = report.summary_message
+    is_mass_storage = report.primary_mode == "UDISK" or bool(report.udisk_drives)
+    return DiagnosticOut(
+        primary_mode=report.primary_mode,
+        detected_vendor=report.detected_vendor,
+        summary_message=report.summary_message,
+        udisk_drives=[UDiskDriveOut(**d.__dict__) for d in report.udisk_drives],
+        driver_problem_devices=[DriverProblemOut(**p.__dict__) for p in report.driver_problem_devices],
+        charging_detected=report.charging_detected,
+        mass_storage_detected=is_mass_storage,
+        message=hint,
+    )
+
+
+@router.get("/udisk/drives", response_model=list[UDiskDriveOut])
+def get_udisk_drives(_: Examiner = Depends(get_current_examiner)) -> list[UDiskDriveOut]:
+    drives = detect_removable_drives()
+    return [UDiskDriveOut(**d.__dict__) for d in drives]
+
+
+@router.post("/udisk/extract")
+def extract_from_udisk(
+    payload: UDiskExtractRequest,
+    db: Session = Depends(get_db),
+    current_examiner: Examiner = Depends(get_current_examiner),
+) -> dict[str, Any]:
+    case = db.query(Case).filter(Case.id == payload.case_id).first()
+    if not case:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
+
+    drive_letter = payload.drive_letter.upper().rstrip("\\")
+    drive_path = f"{drive_letter}\\"
+    if not os.path.exists(drive_path):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"U-Disk drive {payload.drive_letter} is not connected or not accessible.",
+        )
+
+    drives = detect_removable_drives()
+    matched = next((d for d in drives if d.drive_letter.upper() == drive_letter), None)
+    vendor = matched.phone_vendor if matched and matched.phone_vendor else "USB Feature Phone"
+    model = matched.volume_name if matched and matched.volume_name else "Mass Storage Handset"
+
+    device = Device(
+        case_id=case.id,
+        manufacturer=vendor,
+        model=model,
+        serial_number=f"UDISK-{drive_letter.replace(':', '')}",
+        imei="N/A (U-Disk Mode)",
+        is_simulated=False,
+    )
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+
+    acquisition, raw_artifacts = _orchestrator.run_udisk_acquisition(
+        db,
+        drive_path,
+        case_id=case.id,
+        device=device,
+        examiner=current_examiner,
+        categories=payload.categories,
+    )
+
+    return {
+        "status": "success",
+        "acquisition_id": acquisition.id,
+        "acquisition_uid": acquisition.acquisition_uid,
+        "device_id": device.id,
+        "extraction_method": "UDISK_FORENSIC",
+        "drive_letter": payload.drive_letter,
+        "evidence_dir": acquisition.evidence_dir,
+        "categories_extracted": [c.value for c in payload.categories],
+    }
 
 
 @router.get("/ports", response_model=list[PortOut])

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.extraction.extractors import EXTRACTOR_REGISTRY
+from app.extraction.udisk_extractor import UDiskForensicExtractor
 from app.extraction.interfaces import (
     ExtractionCategory,
     ExtractionContext,
@@ -184,6 +185,113 @@ class ExtractionOrchestrator:
             case_id=case_id,
             acquisition_id=acquisition.id,
             details={"status": acquisition.status.value},
+        )
+        return acquisition, raw_artifacts_by_cat
+
+    def run_udisk_acquisition(
+        self,
+        db: Session,
+        drive_path: str,
+        *,
+        case_id: int,
+        device: Device,
+        examiner: Examiner,
+        categories: list[ExtractionCategory],
+    ) -> tuple[Acquisition, dict[str, dict[str, str]]]:
+        """Perform logical and physical forensic acquisition from phone storage mounted as U-Disk."""
+        acq_uid = str(uuid.uuid4())
+        evidence_dir = Path(settings.evidence_dir) / f"case_{case_id}" / f"acq_{acq_uid}"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+
+        acquisition = Acquisition(
+            acquisition_uid=acq_uid,
+            case_id=case_id,
+            device_id=device.id,
+            examiner_id=examiner.id,
+            extraction_method="UDISK_FORENSIC",
+            status=AcquisitionStatus.RUNNING,
+            evidence_dir=str(evidence_dir),
+            started_at=datetime.now(timezone.utc),
+        )
+        db.add(acquisition)
+        db.commit()
+        db.refresh(acquisition)
+
+        record_audit_event(
+            db,
+            "ACQUISITION_STARTED",
+            examiner_id=examiner.id,
+            case_id=case_id,
+            acquisition_id=acquisition.id,
+            details={"categories": [c.value for c in categories], "method": "UDISK_FORENSIC", "drive": drive_path},
+        )
+
+        context = ExtractionContext(
+            case_id=case_id,
+            acquisition_id=acquisition.id,
+            acquisition_uid=acq_uid,
+            evidence_dir=str(evidence_dir),
+        )
+
+        extractor = UDiskForensicExtractor(drive_path)
+        outcomes = extractor.extract_all(context)
+
+        all_limitations: list[str] = []
+        raw_artifacts_by_cat: dict[str, dict[str, str]] = {}
+        any_failed = False
+        any_warnings = False
+
+        for cat in categories:
+            task = ExtractionTask(
+                acquisition_id=acquisition.id,
+                category=TaskCategory(cat.value),
+                status=TaskStatus.RUNNING,
+                started_at=datetime.now(timezone.utc),
+            )
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+
+            outcome = outcomes.get(cat.value)
+            if not outcome:
+                outcome = ExtractionOutcome(
+                    category=cat,
+                    status=ExtractionStatus.UNSUPPORTED,
+                    limitations=[f"No parser available for {cat.value} in U-Disk mode."],
+                )
+
+            raw_artifacts_by_cat[cat.value] = outcome.raw_artifacts
+            all_limitations.extend(outcome.limitations)
+            self._persist_records(db, case_id=case_id, acquisition_id=acquisition.id, outcome=outcome)
+
+            task.status = TaskStatus(outcome.status.value)
+            task.records_extracted = len(outcome.records)
+            task.details = "; ".join(outcome.limitations) if outcome.limitations else None
+            task.completed_at = datetime.now(timezone.utc)
+            db.commit()
+
+            if outcome.status in (ExtractionStatus.PARTIAL, ExtractionStatus.UNSUPPORTED):
+                any_warnings = True
+            elif outcome.status == ExtractionStatus.FAILED:
+                any_failed = True
+
+        acquisition.completed_at = datetime.now(timezone.utc)
+        acquisition.limitations_json = all_limitations
+        acquisition.status = (
+            AcquisitionStatus.COMPLETED_WITH_WARNINGS if (any_warnings or any_failed) else AcquisitionStatus.COMPLETED
+        )
+        db.commit()
+        db.refresh(acquisition)
+
+        preserve_acquisition_evidence(db, acquisition, raw_artifacts_by_cat)
+
+        record_audit_event(
+            db,
+            "ACQUISITION_COMPLETED",
+            examiner_id=examiner.id,
+            case_id=case_id,
+            acquisition_id=acquisition.id,
+            details={"status": acquisition.status.value, "method": "UDISK_FORENSIC"},
         )
         return acquisition, raw_artifacts_by_cat
 

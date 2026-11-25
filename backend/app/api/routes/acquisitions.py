@@ -98,17 +98,17 @@ def start_acquisition(
 
     try:
         engine = session_manager.require_engine()
+        acq, _ = ExtractionOrchestrator().run_acquisition(
+            db,
+            engine,
+            case_id=case.id,
+            device=device,
+            examiner=current_examiner,
+            categories=payload.categories,
+        )
     except SerialTransportError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    acq, _ = ExtractionOrchestrator().run_acquisition(
-        db,
-        engine,
-        case_id=case.id,
-        device=device,
-        examiner=current_examiner,
-        categories=payload.categories,
-    )
     return AcquisitionOut.model_validate(acq)
 
 

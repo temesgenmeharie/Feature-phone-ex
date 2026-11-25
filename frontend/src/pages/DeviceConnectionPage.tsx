@@ -258,10 +258,63 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
     return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
   }
 
+  function validateDeviceReadyForExtraction(mode: "COM" | "UDISK"): { ready: boolean; reason: string } {
+    if (mode === "UDISK") {
+      const drive = selectedUDisk || diagnostics?.udisk_drives?.[0]?.drive_letter;
+      if (!drive) {
+        if (diagnostics?.primary_mode === "CHARGING_ONLY") {
+          return {
+            ready: false,
+            reason:
+              "Extraction Blocked: The connected handset is currently in Charging-Only mode with USB data transfer inactive. To extract: Disconnect and reconnect the cable, unlock the keypad, and choose 'U Disk' or 'Mass Storage' on the phone screen.",
+          };
+        }
+        if (diagnostics?.primary_mode === "COM_DRIVER_MISSING") {
+          return {
+            ready: false,
+            reason:
+              "Extraction Blocked: Handset is connected in COM mode without a Windows driver (Code 28). Run Install_Phone_Drivers.bat on your PC, or unplug and choose 'U Disk' mode on the phone screen.",
+          };
+        }
+        return {
+          ready: false,
+          reason:
+            "Extraction Blocked: No phone storage drive detected. Please connect your feature phone via USB cable and select 'U Disk' or 'Mass Storage' on the phone display.",
+        };
+      }
+      return { ready: true, reason: "" };
+    }
+
+    if (mode === "COM") {
+      if (!status?.connected) {
+        return {
+          ready: false,
+          reason:
+            "Extraction Blocked: No serial/COM port is connected. Please select your phone's port and click 'Connect & Verify Device' first.",
+        };
+      }
+      if (!ident?.at_ready || !ident?.device_id) {
+        return {
+          ready: false,
+          reason: `Extraction Blocked: No responsive feature phone detected on ${status?.port_name || "selected port"}. The device did not respond to Hayes AT command verification. Ensure the phone is powered ON, unlocked, and configured in 'COM Port / Modem / PC Suite' mode.`,
+        };
+      }
+      return { ready: true, reason: "" };
+    }
+
+    return { ready: false, reason: "No device detected for extraction." };
+  }
+
   async function handleExtractUDisk(targetDrive?: string) {
+    const check = validateDeviceReadyForExtraction("UDISK");
+    if (!check.ready) {
+      setError(check.reason);
+      setMsg(null);
+      return;
+    }
     const drive = targetDrive || selectedUDisk || (diagnostics?.udisk_drives?.[0]?.drive_letter);
     if (!drive) {
-      setError("Please select a valid U-Disk phone storage drive.");
+      setError(check.reason);
       return;
     }
     if (activeCategoryList.length === 0) {
@@ -414,7 +467,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
       } else {
         setError(
           res.error_detail ||
-            `Port ${selectedPort} opened, but no response to AT commands. Ensure your feature phone is powered ON, unlocked, and set to 'COM Port / Modem / PC Suite' mode.`
+          `Port ${selectedPort} opened, but no response to AT commands. Ensure your feature phone is powered ON, unlocked, and set to 'COM Port / Modem / PC Suite' mode.`
         );
       }
     } catch (e) {
@@ -471,6 +524,12 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
   }
 
   async function handleExtractCallsAndMessages() {
+    const check = validateDeviceReadyForExtraction("COM");
+    if (!check.ready) {
+      setError(check.reason);
+      setMsg(null);
+      return;
+    }
     if (activeCategoryList.length === 0) {
       setError("Please select at least one category to extract.");
       return;
@@ -480,24 +539,10 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
     setBusy(true);
     try {
       const caseId = await ensureCaseId();
-      let deviceId = ident?.device_id;
+      const deviceId = ident?.device_id;
 
       if (!deviceId) {
-        // Auto-probe and register device on the active port
-        const idRes = await apiFetch<IdentifyResult>(
-          "/devices/identify",
-          { method: "POST", body: JSON.stringify({ case_id: caseId }) },
-          token
-        );
-        setIdent(idRes);
-        deviceId = idRes.device_id;
-        if (!deviceId) {
-          throw new Error(
-            idRes.error_detail ||
-              "Cannot extract: Handset did not respond with 'OK' to AT commands on this port. Ensure phone is ON and in 'COM Port / Modem / PC Suite' mode."
-          );
-        }
-        setActiveDeviceId(deviceId);
+        throw new Error(check.reason);
       }
 
       const acq = await apiFetch<AcquisitionOut>(
@@ -793,16 +838,15 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                   <label
                     key={item.key}
                     onClick={() => toggleCategory(item.key)}
-                    className={`flex items-start gap-2 rounded-lg border p-2.5 cursor-pointer transition ${
-                      selectedCategories[item.key]
+                    className={`flex items-start gap-2 rounded-lg border p-2.5 cursor-pointer transition ${selectedCategories[item.key]
                         ? "border-emerald-600/70 bg-emerald-950/30 text-emerald-200"
                         : "border-slate-800 bg-slate-950/50 text-slate-400 hover:border-slate-700"
-                    }`}
+                      }`}
                   >
                     <input
                       type="checkbox"
                       checked={selectedCategories[item.key]}
-                      onChange={() => {}} // handled by parent onClick
+                      onChange={() => { }} // handled by parent onClick
                       className="mt-0.5 rounded border-slate-700 bg-slate-900 text-emerald-600 focus:ring-0"
                     />
                     <div>
@@ -1041,26 +1085,30 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
               </div>
             )}
 
-            {/* Extraction button: active when connected */}
+            {/* Extraction button: active ONLY when phone is detected and verified */}
             <button
               onClick={handleExtractCallsAndMessages}
-              disabled={busy || !status?.connected}
+              disabled={busy || !isDeviceActiveAndReady}
               title={
                 !status?.connected
-                  ? "Connect a serial port first"
-                  : "Extract phone calls and SMS messages"
+                  ? "Connect and verify a feature phone port first"
+                  : !isDeviceActiveAndReady
+                    ? "Handset did not respond to AT commands on this port - extraction blocked"
+                    : `Extract calls & messages from ${phoneDisplayName}`
               }
-              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${status?.connected && !busy
-                ? "bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-900/40"
-                : "bg-slate-800 text-slate-500 cursor-not-allowed opacity-50"
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${isDeviceActiveAndReady && !busy
+                  ? "bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-900/40"
+                  : "bg-slate-800 text-slate-500 cursor-not-allowed opacity-50"
                 }`}
             >
               <PhoneCall className="h-4 w-4" />
               {busy
                 ? "Extracting..."
-                : status?.connected
+                : isDeviceActiveAndReady
                   ? phoneDisplayName ? `Extract Calls & Messages (${phoneDisplayName})` : "Extract Calls & Messages"
-                  : "Extract Calls & Messages (Connect Port First)"}
+                  : status?.connected
+                    ? "Extraction Blocked (No Phone Detected)"
+                    : "Extract Calls & Messages (Connect Port First)"}
             </button>
           </div>
         </div>
@@ -1071,16 +1119,16 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
             <h3 className="font-semibold text-slate-200">2. Device Identification & Readiness</h3>
             <span
               className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${isDeviceActiveAndReady
-                ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
-                : status?.connected
-                  ? "bg-amber-950 text-amber-400 border border-amber-800"
-                  : "bg-slate-800 text-slate-400"
+                  ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
+                  : status?.connected
+                    ? "bg-amber-950 text-amber-400 border border-amber-800"
+                    : "bg-slate-800 text-slate-400"
                 }`}
             >
               {isDeviceActiveAndReady
                 ? "Ready For Extraction"
                 : status?.connected
-                  ? "Port Open (Pending AT Handshake)"
+                  ? "No Phone Detected (Awaiting AT Response)"
                   : "Disconnected"}
             </span>
           </div>
@@ -1094,12 +1142,24 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                 </span>
               ) : status?.connected ? (
                 <span className="text-amber-400 font-mono">
-                  Port Open ({status?.port_name}) — Awaiting AT Response
+                  Port Open ({status?.port_name}) — No Response to AT Commands
                 </span>
               ) : (
                 <span className="text-slate-500 font-mono">Disconnected</span>
               )}
             </p>
+            {status?.connected && !ident?.at_ready && (
+              <div className="rounded-lg bg-amber-950/40 border border-amber-800/60 p-2.5 text-xs text-amber-300 space-y-1 mt-1">
+                <span className="font-semibold flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                  No Responding Phone Detected on {status?.port_name}
+                </span>
+                <p className="text-slate-300 text-[11px] leading-relaxed">
+                  Port opened, but did not reply to Hayes AT commands. The system has safely blocked extraction.
+                  Ensure your phone is powered ON, unlocked, and configured in 'COM Port / Modem / PC Suite' mode.
+                </p>
+              </div>
+            )}
             <p>
               Manufacturer:{" "}
               <span className="font-mono font-semibold text-sky-300">
@@ -1310,16 +1370,15 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
                 <label
                   key={item.key}
                   onClick={() => toggleCategory(item.key)}
-                  className={`flex items-start gap-2 rounded-lg border p-2.5 cursor-pointer transition ${
-                    selectedCategories[item.key]
+                  className={`flex items-start gap-2 rounded-lg border p-2.5 cursor-pointer transition ${selectedCategories[item.key]
                       ? "border-cyan-600/70 bg-cyan-950/40 text-cyan-200"
                       : "border-slate-800 bg-slate-950/50 text-slate-400 hover:border-slate-700"
-                  }`}
+                    }`}
                 >
                   <input
                     type="checkbox"
                     checked={selectedCategories[item.key]}
-                    onChange={() => {}} // handled by parent onClick
+                    onChange={() => { }} // handled by parent onClick
                     className="mt-0.5 rounded border-slate-700 bg-slate-900 text-cyan-600 focus:ring-0"
                   />
                   <div>

@@ -185,7 +185,10 @@ def extract_from_udisk(
     if not os.path.exists(drive_path):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"U-Disk drive {payload.drive_letter} is not connected or not accessible.",
+            detail=(
+                f"Cannot extract data: Phone storage drive {payload.drive_letter} is not connected or accessible. "
+                "Please connect your feature phone via USB cable, unlock the keypad, and select 'U Disk' or 'Mass Storage' on the phone screen."
+            ),
         )
 
     drives = detect_removable_drives()

@@ -122,3 +122,34 @@ def test_udisk_extractor_full_directory(tmp_path: Path):
     assert ExtractionCategory.SMS.value in outcomes
     assert len(outcomes[ExtractionCategory.SMS.value].records) == 1
     assert outcomes[ExtractionCategory.SMS.value].records[0]["content"] == "Meeting confirmed"
+
+
+def test_udisk_preview_endpoint(tmp_path: Path):
+    from unittest.mock import MagicMock
+    from app.api.routes.devices import preview_udisk_drive
+
+    vcard_dir = tmp_path / "vCard"
+    vcard_dir.mkdir()
+    (vcard_dir / "contacts.vcf").write_text(
+        "BEGIN:VCARD\nVERSION:2.1\nFN:Abebe\nTEL;CELL:0911001122\nEND:VCARD",
+        encoding="utf-8"
+    )
+    (tmp_path / "message.vmg").write_text(
+        "BEGIN:VMSG\nBEGIN:VCARD\nTEL:0922334455\nEND:VCARD\nBEGIN:VBODY\nDate:2026/11/20 10:00:00\nMeeting confirmed\nEND:VBODY\nEND:VMSG",
+        encoding="utf-8"
+    )
+    (tmp_path / "calllog.dat").write_bytes(b"\x00" * 128)
+
+    mock_examiner = MagicMock()
+    preview = preview_udisk_drive(drive_letter=str(tmp_path), _=mock_examiner)
+
+    assert preview.contacts_count == 1
+    assert preview.sms_count == 1
+    assert preview.calls_count >= 1
+    assert preview.carved_candidates_count >= 1
+    assert "contacts" in preview.supported_categories
+    assert "sms" in preview.supported_categories
+    assert "call_history" in preview.supported_categories
+    assert len(preview.artifacts) >= 3
+
+

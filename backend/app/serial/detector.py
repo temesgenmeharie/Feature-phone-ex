@@ -293,3 +293,4 @@ def detect_usb_connection_mode() -> USBModeReport:
         driver_problem_devices=driver_problems,
         charging_detected=False,
     )
+

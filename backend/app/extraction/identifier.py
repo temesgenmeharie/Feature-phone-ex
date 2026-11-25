@@ -22,6 +22,7 @@ class DeviceIdentificationResult:
     supported_cpms_storages: list[str] = field(default_factory=list)
     supported_sms_modes: list[int] = field(default_factory=list)
     capabilities: dict[str, dict[str, Any]] = field(default_factory=dict)
+    storage_stats: dict[str, Any] = field(default_factory=dict)
     unsupported_commands: list[str] = field(default_factory=list)
     raw_responses: dict[str, str] = field(default_factory=dict)
     error_detail: str | None = None
@@ -141,6 +142,26 @@ class DeviceIdentifier:
             res.supported_sms_modes = [int(m) for m in re.findall(r"\b([01])\b", cmgf_test.body_lines[0])]
         else:
             res.unsupported_commands.append("AT+CMGF=?")
+
+        # Probe Pre-Extraction Storage Counts & Artifact Previews
+        for st in res.supported_cpbs_storages:
+            sel = engine.send_command(f'AT+CPBS="{st}"', timeout_s=1.5)
+            if sel.is_ok:
+                q = engine.send_command("AT+CPBS?", timeout_s=1.5)
+                if q.is_ok and q.body_lines:
+                    m = re.search(r'\+CPBS:\s*"([^"]+)"\s*,\s*(\d+)\s*,\s*(\d+)', q.body_lines[0])
+                    if m:
+                        used = int(m.group(2))
+                        total = int(m.group(3))
+                        category = "calls" if st in ("MC", "RC", "DC") else "contacts"
+                        res.storage_stats.setdefault(category, {})[st] = {"used": used, "total": total}
+
+        for st in res.supported_cpms_storages:
+            sel = engine.send_command(f'AT+CPMS="{st}"', timeout_s=1.5)
+            if sel.is_ok and sel.body_lines:
+                m = re.search(r'\+CPMS:\s*(\d+)\s*,\s*(\d+)', sel.body_lines[0])
+                if m:
+                    res.storage_stats.setdefault("sms", {})[st] = {"used": int(m.group(1)), "total": int(m.group(2))}
 
         # Build capability matrix
         cap_results = self._build_capabilities(res)

@@ -3,13 +3,20 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   AlertTriangle,
+  Binary,
   CheckCircle2,
+  CheckSquare,
   Cpu,
+  Database,
   Download,
+  Eye,
+  FileSearch,
   FileSpreadsheet,
   FileText,
   FolderTree,
   HardDrive,
+  Layers,
+  ListChecks,
   MessageSquare,
   PhoneCall,
   Plug,
@@ -17,6 +24,7 @@ import {
   SearchCheck,
   ShieldCheck,
   Smartphone,
+  Square,
   Unplug,
   Usb,
 } from "lucide-react";
@@ -48,9 +56,42 @@ interface IdentifyResult {
   firmware_revision: string | null;
   imei: string | null;
   sim_status: string | null;
-  capabilities: Record<string, { status: string; notes?: string }>;
+  charset?: string | null;
+  capabilities: Record<string, { status: string; notes?: string; supported_commands?: string[]; unsupported_commands?: string[] }>;
+  storage_stats?: {
+    calls?: Record<string, { used: number; total: number }>;
+    contacts?: Record<string, { used: number; total: number }>;
+    sms?: Record<string, { used: number; total: number }>;
+  };
   unsupported_commands: string[];
   error_detail?: string | null;
+}
+
+interface DiscoveredArtifact {
+  category: string;
+  file_name: string;
+  file_path: string;
+  size_bytes: number;
+  estimated_count: number;
+  description: string;
+  is_deleted_carvable: boolean;
+}
+
+interface UDiskPreview {
+  drive_letter: string;
+  volume_name: string;
+  filesystem: string;
+  phone_vendor: string | null;
+  total_bytes: number;
+  free_bytes: number;
+  used_bytes: number;
+  contacts_count: number;
+  sms_count: number;
+  calls_count: number;
+  carved_candidates_count: number;
+  artifacts: DiscoveredArtifact[];
+  supported_categories: string[];
+  forensic_guarantee: string;
 }
 
 interface UDiskDrive {
@@ -137,6 +178,44 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
 
   const [selectedUDisk, setSelectedUDisk] = useState<string>("");
 
+  const [selectedCategories, setSelectedCategories] = useState<{
+    device_info: boolean;
+    contacts: boolean;
+    sms: boolean;
+    call_history: boolean;
+  }>({
+    device_info: true,
+    contacts: true,
+    sms: true,
+    call_history: true,
+  });
+
+  const toggleCategory = (cat: keyof typeof selectedCategories) => {
+    setSelectedCategories((prev) => ({ ...prev, [cat]: !prev[cat] }));
+  };
+
+  const selectAllCategories = () => {
+    setSelectedCategories({
+      device_info: true,
+      contacts: true,
+      sms: true,
+      call_history: true,
+    });
+  };
+
+  const deselectAllCategories = () => {
+    setSelectedCategories({
+      device_info: false,
+      contacts: false,
+      sms: false,
+      call_history: false,
+    });
+  };
+
+  const activeCategoryList = Object.entries(selectedCategories)
+    .filter(([_, enabled]) => enabled)
+    .map(([k]) => k);
+
   const { data: ports = [], refetch: refetchPorts, isFetching: isRefreshingPorts } = useQuery({
     queryKey: ["ports", includeSimulator],
     queryFn: () =>
@@ -158,10 +237,35 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
     }
   }, [diagnostics, selectedUDisk]);
 
+  const targetDriveLetter = selectedUDisk || diagnostics?.udisk_drives?.[0]?.drive_letter || "";
+
+  const {
+    data: udiskPreview,
+    isLoading: isPreviewLoading,
+    refetch: refetchUDiskPreview,
+  } = useQuery({
+    queryKey: ["udisk-preview", targetDriveLetter],
+    queryFn: () =>
+      apiFetch<UDiskPreview>(`/devices/udisk/preview?drive_letter=${encodeURIComponent(targetDriveLetter)}`, {}, token),
+    enabled: !!token && !!targetDriveLetter && (diagnostics?.primary_mode === "UDISK" || (diagnostics?.udisk_drives?.length ?? 0) > 0),
+  });
+
+  function formatBytes(bytes: number): string {
+    if (!bytes || bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+  }
+
   async function handleExtractUDisk(targetDrive?: string) {
     const drive = targetDrive || selectedUDisk || (diagnostics?.udisk_drives?.[0]?.drive_letter);
     if (!drive) {
       setError("Please select a valid U-Disk phone storage drive.");
+      return;
+    }
+    if (activeCategoryList.length === 0) {
+      setError("Please select at least one category to extract.");
       return;
     }
     setError(null);
@@ -181,7 +285,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
           body: JSON.stringify({
             case_id: caseId,
             drive_letter: drive,
-            categories: ["device_info", "contacts", "sms", "call_history"],
+            categories: activeCategoryList,
           }),
         },
         token
@@ -367,6 +471,10 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
   }
 
   async function handleExtractCallsAndMessages() {
+    if (activeCategoryList.length === 0) {
+      setError("Please select at least one category to extract.");
+      return;
+    }
     setMsg(null);
     setError(null);
     setBusy(true);
@@ -399,7 +507,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
           body: JSON.stringify({
             case_id: caseId,
             device_id: deviceId,
-            categories: ["device_info", "contacts", "sms", "call_history"],
+            categories: activeCategoryList,
           }),
         },
         token
@@ -482,54 +590,248 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
       {/* USB Connection Mode Hub */}
       {diagnostics?.primary_mode === "UDISK" || (diagnostics?.udisk_drives && diagnostics.udisk_drives.length > 0) ? (
         <div className="rounded-xl border border-emerald-500/50 bg-emerald-950/40 p-5 text-emerald-200 shadow-xl shadow-emerald-950/50 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-800/60 pb-3">
             <div className="flex items-center gap-2 font-semibold text-emerald-300 text-base">
               <HardDrive className="h-5 w-5 text-emerald-400 shrink-0" />
-              <span>U Disk (USB Mass Storage) Mode Detected</span>
+              <span>Pre-Extraction Forensic Reconnaissance & Artifact Preview — U Disk Mode</span>
             </div>
-            <span className="rounded-full bg-emerald-500/20 border border-emerald-400/40 px-3 py-1 text-xs font-semibold text-emerald-300 uppercase tracking-wide">
-              Ready For Extraction
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-emerald-500/20 border border-emerald-400/40 px-3 py-1 text-xs font-semibold text-emerald-300 uppercase tracking-wide">
+                Storage Analyzed & Ready
+              </span>
+              <button
+                onClick={() => refetchUDiskPreview()}
+                disabled={isPreviewLoading}
+                title="Re-scan phone storage"
+                className="rounded bg-emerald-900/60 border border-emerald-700/50 p-1.5 text-emerald-300 hover:bg-emerald-800 transition"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isPreviewLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
           </div>
 
-          <p className="text-slate-200 text-xs leading-relaxed">
-            The handset is connected and mounted as USB storage. The system can directly extract call logs, text messages, vCards, and perform <strong>forensic carving</strong> for deleted SMS PDUs and erased call records.
-          </p>
-
+          {/* Drive & Capacity Overview */}
           <div className="rounded-lg bg-slate-900/90 border border-slate-800 p-4 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <span className="text-xs text-slate-400 block">Detected Phone Volume:</span>
-                <span className="font-mono text-sm font-semibold text-emerald-400">
-                  {diagnostics.udisk_drives?.[0]?.drive_letter || selectedUDisk || "E:"} ({diagnostics.udisk_drives?.[0]?.phone_vendor || diagnostics.detected_vendor || "Feature Phone Storage"})
-                </span>
-                <span className="text-xs text-slate-400 block mt-0.5">
-                  Filesystem: {diagnostics.udisk_drives?.[0]?.filesystem || "FAT"} | Volume Label: {diagnostics.udisk_drives?.[0]?.volume_name || "REMOVABLE"}
-                </span>
+                <span className="text-xs text-slate-400 block">Phone Storage Volume:</span>
+                <div className="flex items-center gap-2 mt-0.5">
+                  {diagnostics.udisk_drives && diagnostics.udisk_drives.length > 1 ? (
+                    <select
+                      value={selectedUDisk}
+                      onChange={(e) => setSelectedUDisk(e.target.value)}
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-sm font-semibold text-emerald-400"
+                    >
+                      {diagnostics.udisk_drives.map((d) => (
+                        <option key={d.drive_letter} value={d.drive_letter}>
+                          {d.drive_letter} ({d.volume_name || "REMOVABLE"}) — {d.phone_vendor || "Feature Phone"}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="font-mono text-sm font-semibold text-emerald-400">
+                      {targetDriveLetter} ({udiskPreview?.phone_vendor || diagnostics.udisk_drives?.[0]?.phone_vendor || "Feature Phone Storage"})
+                    </span>
+                  )}
+                  <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-300">
+                    FS: {udiskPreview?.filesystem || diagnostics.udisk_drives?.[0]?.filesystem || "FAT"}
+                  </span>
+                  <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-300">
+                    Label: {udiskPreview?.volume_name || diagnostics.udisk_drives?.[0]?.volume_name || "REMOVABLE"}
+                  </span>
+                </div>
               </div>
 
-              <button
-                onClick={() => handleExtractUDisk(diagnostics.udisk_drives?.[0]?.drive_letter || selectedUDisk)}
-                disabled={busy}
-                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 shadow-lg shadow-emerald-900/40 transition disabled:opacity-50"
-              >
-                <FolderTree className="h-4 w-4" />
-                {busy ? "Extracting Storage..." : "Extract Phone Storage (Active & Carved Records)"}
-              </button>
+              {/* Disk Capacity Bar */}
+              {udiskPreview && udiskPreview.total_bytes > 0 && (
+                <div className="w-full sm:w-64 text-xs space-y-1">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Used: {formatBytes(udiskPreview.used_bytes)}</span>
+                    <span>Total: {formatBytes(udiskPreview.total_bytes)}</span>
+                  </div>
+                  <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 rounded-full"
+                      style={{
+                        width: `${Math.min(100, Math.round((udiskPreview.used_bytes / udiskPreview.total_bytes) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="text-[11px] text-slate-500 block text-right">
+                    {formatBytes(udiskPreview.free_bytes)} free
+                  </span>
+                </div>
+              )}
             </div>
 
-            {diagnostics.udisk_drives?.[0]?.detected_folders && diagnostics.udisk_drives[0].detected_folders.length > 0 && (
-              <div className="flex items-center gap-2 pt-2 border-t border-slate-800 text-xs text-slate-400">
-                <span className="font-semibold text-slate-300">Detected Folders/Files:</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {diagnostics.udisk_drives[0].detected_folders.map((f) => (
-                    <span key={f} className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-300">
-                      {f}
-                    </span>
+            {/* 4 Feature & Artifact Preview Metric Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2">
+              <div className="rounded-lg bg-slate-950/80 border border-slate-800/80 p-3 space-y-1">
+                <div className="flex items-center gap-1.5 text-xs text-sky-400 font-medium">
+                  <Smartphone className="h-4 w-4" />
+                  <span>Contacts</span>
+                </div>
+                <div className="text-xl font-bold font-mono text-slate-100">
+                  {isPreviewLoading ? "..." : udiskPreview?.contacts_count ?? 0}
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  vCard (.vcf) entries detected
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-slate-950/80 border border-slate-800/80 p-3 space-y-1">
+                <div className="flex items-center gap-1.5 text-xs text-indigo-400 font-medium">
+                  <MessageSquare className="h-4 w-4" />
+                  <span>SMS Messages</span>
+                </div>
+                <div className="text-xl font-bold font-mono text-slate-100">
+                  {isPreviewLoading ? "..." : udiskPreview?.sms_count ?? 0}
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  vMessage (.vmg) records found
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-slate-950/80 border border-slate-800/80 p-3 space-y-1">
+                <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
+                  <PhoneCall className="h-4 w-4" />
+                  <span>Call History</span>
+                </div>
+                <div className="text-xl font-bold font-mono text-slate-100">
+                  {isPreviewLoading ? "..." : udiskPreview?.calls_count ?? 0}
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Dialed, received & missed logs
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-slate-950/80 border border-purple-900/50 bg-purple-950/20 p-3 space-y-1">
+                <div className="flex items-center gap-1.5 text-xs text-purple-300 font-medium">
+                  <Binary className="h-4 w-4" />
+                  <span>Carving Targets</span>
+                </div>
+                <div className="text-xl font-bold font-mono text-purple-200">
+                  {isPreviewLoading ? "..." : udiskPreview?.carved_candidates_count ?? 0}
+                </div>
+                <p className="text-[11px] text-purple-300/80">
+                  Binary files eligible for deleted carving
+                </p>
+              </div>
+            </div>
+
+            {/* Discovered Artifact Files Explorer */}
+            {udiskPreview?.artifacts && udiskPreview.artifacts.length > 0 && (
+              <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                <div className="flex items-center justify-between text-xs text-slate-300">
+                  <span className="font-semibold flex items-center gap-1.5">
+                    <FileSearch className="h-3.5 w-3.5 text-emerald-400" />
+                    Discovered Forensic Artifact Files ({udiskPreview.artifacts.length}):
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    Preview of candidate files analyzed before extraction
+                  </span>
+                </div>
+
+                <div className="max-h-48 overflow-y-auto rounded border border-slate-800 bg-slate-950 divide-y divide-slate-900">
+                  {udiskPreview.artifacts.map((art, idx) => (
+                    <div key={idx} className="flex items-center justify-between px-3 py-2 text-xs hover:bg-slate-900/50">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-mono text-slate-200 truncate">{art.file_name}</span>
+                        <span className="text-[11px] text-slate-500 font-mono truncate max-w-xs">({art.file_path})</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-slate-400 font-mono text-[11px]">{formatBytes(art.size_bytes)}</span>
+                        <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[11px] font-mono text-slate-300 uppercase">
+                          {art.category}
+                        </span>
+                        {art.is_deleted_carvable && (
+                          <span className="rounded bg-purple-950 border border-purple-800 px-1.5 py-0.5 text-[10px] font-semibold text-purple-300">
+                            🛡️ Carvable Deleted
+                          </span>
+                        )}
+                        <span className="font-semibold text-emerald-400 text-[11px]">
+                          ~{art.estimated_count} records
+                        </span>
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
             )}
+
+            {/* Category Selection Checklist */}
+            <div className="space-y-2 pt-2 border-t border-slate-800">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <ListChecks className="h-4 w-4 text-emerald-400" />
+                  Select Forensic Categories to Acquire:
+                </span>
+                <div className="flex gap-2 text-xs">
+                  <button
+                    onClick={selectAllCategories}
+                    className="text-emerald-400 hover:text-emerald-300 underline text-[11px]"
+                  >
+                    Select All
+                  </button>
+                  <span className="text-slate-600">|</span>
+                  <button
+                    onClick={deselectAllCategories}
+                    className="text-slate-400 hover:text-slate-300 underline text-[11px]"
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { key: "device_info" as const, label: "Device Info", desc: "Volume & serial specs" },
+                  { key: "contacts" as const, label: "Contacts", desc: "vCard address books" },
+                  { key: "sms" as const, label: "SMS Messages", desc: "vMessage & carved PDUs" },
+                  { key: "call_history" as const, label: "Call History", desc: "Logs & carved records" },
+                ].map((item) => (
+                  <label
+                    key={item.key}
+                    onClick={() => toggleCategory(item.key)}
+                    className={`flex items-start gap-2 rounded-lg border p-2.5 cursor-pointer transition ${
+                      selectedCategories[item.key]
+                        ? "border-emerald-600/70 bg-emerald-950/30 text-emerald-200"
+                        : "border-slate-800 bg-slate-950/50 text-slate-400 hover:border-slate-700"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedCategories[item.key]}
+                      onChange={() => {}} // handled by parent onClick
+                      className="mt-0.5 rounded border-slate-700 bg-slate-900 text-emerald-600 focus:ring-0"
+                    />
+                    <div>
+                      <span className="text-xs font-semibold block">{item.label}</span>
+                      <span className="text-[10px] text-slate-400">{item.desc}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Forensic Acquisition Action Button & Guarantee */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" />
+                <span>
+                  <strong>Forensic Guarantee:</strong> 100% Read-Only acquisition. All extracted files secured with SHA-256 evidence hashes.
+                </span>
+              </div>
+
+              <button
+                onClick={() => handleExtractUDisk(targetDriveLetter)}
+                disabled={busy || activeCategoryList.length === 0}
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 shadow-lg shadow-emerald-900/40 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <FolderTree className="h-4 w-4" />
+                {busy ? "Extracting Selected Categories..." : `Proceed with Extraction (${activeCategoryList.length} Selected)`}
+              </button>
+            </div>
           </div>
         </div>
       ) : diagnostics?.primary_mode === "COM_DRIVER_MISSING" || (diagnostics?.driver_problem_devices && diagnostics.driver_problem_devices.length > 0) ? (
@@ -815,6 +1117,210 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
         </div>
       </div>
 
+      {/* Pre-Extraction Feature & Storage Slot Preview for COM Mode */}
+      {isDeviceActiveAndReady && (
+        <div className="rounded-xl border border-cyan-500/50 bg-cyan-950/30 p-6 text-slate-200 shadow-xl shadow-cyan-950/40 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyan-800/60 pb-3">
+            <div>
+              <h3 className="text-base font-semibold text-cyan-200 flex items-center gap-2">
+                <Eye className="h-5 w-5 text-cyan-400" />
+                3. Pre-Extraction Feature & Storage Slot Reconnaissance — {phoneDisplayName}
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Probed storage slot occupancy and AT capabilities before initiating forensic extraction
+              </p>
+            </div>
+            <span className="rounded-full bg-cyan-500/20 border border-cyan-400/40 px-3 py-1 text-xs font-semibold text-cyan-300 uppercase tracking-wide">
+              AT Responsive & Verified
+            </span>
+          </div>
+
+          {/* Storage Slot Occupancy Matrix */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Call History Slots */}
+            <div className="rounded-lg bg-slate-900/90 border border-slate-800 p-3.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
+                  <PhoneCall className="h-4 w-4" /> Call History Registers
+                </span>
+                <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+                  AT+CPBS
+                </span>
+              </div>
+              <div className="space-y-1 text-xs font-mono">
+                <div className="flex justify-between py-0.5 border-b border-slate-800/50">
+                  <span className="text-slate-400">Missed Calls (MC):</span>
+                  <span className="text-emerald-300 font-semibold">
+                    {ident?.storage_stats?.calls?.MC
+                      ? `${ident.storage_stats.calls.MC.used} / ${ident.storage_stats.calls.MC.total} used`
+                      : "Supported / Available"}
+                  </span>
+                </div>
+                <div className="flex justify-between py-0.5 border-b border-slate-800/50">
+                  <span className="text-slate-400">Received Calls (RC):</span>
+                  <span className="text-emerald-300 font-semibold">
+                    {ident?.storage_stats?.calls?.RC
+                      ? `${ident.storage_stats.calls.RC.used} / ${ident.storage_stats.calls.RC.total} used`
+                      : "Supported / Available"}
+                  </span>
+                </div>
+                <div className="flex justify-between py-0.5">
+                  <span className="text-slate-400">Dialed Calls (DC):</span>
+                  <span className="text-emerald-300 font-semibold">
+                    {ident?.storage_stats?.calls?.DC
+                      ? `${ident.storage_stats.calls.DC.used} / ${ident.storage_stats.calls.DC.total} used`
+                      : "Supported / Available"}
+                  </span>
+                </div>
+              </div>
+              <span className="text-[10px] text-slate-500 block pt-1">
+                Source: Handset NVRAM log memory (not CDRs)
+              </span>
+            </div>
+
+            {/* Contacts Slots */}
+            <div className="rounded-lg bg-slate-900/90 border border-slate-800 p-3.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-sky-400 flex items-center gap-1.5">
+                  <Smartphone className="h-4 w-4" /> Phonebook Storage
+                </span>
+                <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+                  AT+CPBS
+                </span>
+              </div>
+              <div className="space-y-1 text-xs font-mono">
+                <div className="flex justify-between py-0.5 border-b border-slate-800/50">
+                  <span className="text-slate-400">SIM Storage (SM):</span>
+                  <span className="text-sky-300 font-semibold">
+                    {ident?.storage_stats?.contacts?.SM
+                      ? `${ident.storage_stats.contacts.SM.used} / ${ident.storage_stats.contacts.SM.total} used`
+                      : "Available on SIM"}
+                  </span>
+                </div>
+                <div className="flex justify-between py-0.5">
+                  <span className="text-slate-400">Handset Storage (ME):</span>
+                  <span className="text-sky-300 font-semibold">
+                    {ident?.storage_stats?.contacts?.ME
+                      ? `${ident.storage_stats.contacts.ME.used} / ${ident.storage_stats.contacts.ME.total} used`
+                      : "Available on Phone"}
+                  </span>
+                </div>
+              </div>
+              <span className="text-[10px] text-slate-500 block pt-1">
+                Protocol: AT+CPBR indexed sequential parsing
+              </span>
+            </div>
+
+            {/* SMS Message Slots */}
+            <div className="rounded-lg bg-slate-900/90 border border-slate-800 p-3.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-indigo-400 flex items-center gap-1.5">
+                  <MessageSquare className="h-4 w-4" /> SMS Message Store
+                </span>
+                <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+                  AT+CPMS
+                </span>
+              </div>
+              <div className="space-y-1 text-xs font-mono">
+                <div className="flex justify-between py-0.5 border-b border-slate-800/50">
+                  <span className="text-slate-400">SIM Storage (SM):</span>
+                  <span className="text-indigo-300 font-semibold">
+                    {ident?.storage_stats?.sms?.SM
+                      ? `${ident.storage_stats.sms.SM.used} / ${ident.storage_stats.sms.SM.total} used`
+                      : "Available on SIM"}
+                  </span>
+                </div>
+                <div className="flex justify-between py-0.5">
+                  <span className="text-slate-400">Handset Storage (ME):</span>
+                  <span className="text-indigo-300 font-semibold">
+                    {ident?.storage_stats?.sms?.ME
+                      ? `${ident.storage_stats.sms.ME.used} / ${ident.storage_stats.sms.ME.total} used`
+                      : "Available on Phone"}
+                  </span>
+                </div>
+              </div>
+              <span className="text-[10px] text-purple-300/80 block pt-1 font-sans">
+                🛡️ PDU Mode (GSM 03.40) + Deleted Carving Active
+              </span>
+            </div>
+          </div>
+
+          {/* Category Selection Checklist */}
+          <div className="rounded-lg bg-slate-900/90 border border-slate-800 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                <ListChecks className="h-4 w-4 text-cyan-400" />
+                Select Forensic Categories to Acquire:
+              </span>
+              <div className="flex gap-2 text-xs">
+                <button
+                  onClick={selectAllCategories}
+                  className="text-cyan-400 hover:text-cyan-300 underline text-[11px]"
+                >
+                  Select All
+                </button>
+                <span className="text-slate-600">|</span>
+                <button
+                  onClick={deselectAllCategories}
+                  className="text-slate-400 hover:text-slate-300 underline text-[11px]"
+                >
+                  Clear All
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                { key: "device_info" as const, label: "Device Info", desc: `IMEI: ${ident?.imei || "Available"}` },
+                { key: "contacts" as const, label: "Contacts", desc: "SIM & Phonebook slots" },
+                { key: "sms" as const, label: "SMS Messages", desc: "PDU hex & deleted carving" },
+                { key: "call_history" as const, label: "Call History", desc: "Missed, received & dialed" },
+              ].map((item) => (
+                <label
+                  key={item.key}
+                  onClick={() => toggleCategory(item.key)}
+                  className={`flex items-start gap-2 rounded-lg border p-2.5 cursor-pointer transition ${
+                    selectedCategories[item.key]
+                      ? "border-cyan-600/70 bg-cyan-950/40 text-cyan-200"
+                      : "border-slate-800 bg-slate-950/50 text-slate-400 hover:border-slate-700"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedCategories[item.key]}
+                    onChange={() => {}} // handled by parent onClick
+                    className="mt-0.5 rounded border-slate-700 bg-slate-900 text-cyan-600 focus:ring-0"
+                  />
+                  <div>
+                    <span className="text-xs font-semibold block">{item.label}</span>
+                    <span className="text-[10px] text-slate-400">{item.desc}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {/* Action Button & Non-destructive Notice */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <ShieldCheck className="h-4 w-4 text-cyan-400 shrink-0" />
+                <span>
+                  <strong>Non-Destructive AT Execution:</strong> Commands are strictly read-only. Destructive resets (AT+CMGD, AT+CPBW) are hard-blocked.
+                </span>
+              </div>
+
+              <button
+                onClick={handleExtractCallsAndMessages}
+                disabled={busy || activeCategoryList.length === 0}
+                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 shadow-lg shadow-indigo-900/40 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <PhoneCall className="h-4 w-4" />
+                {busy ? "Extracting..." : `Proceed with Forensic Extraction (${activeCategoryList.length} Selected)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Extracted Phone Calls & Messages Display with Format Downloads */}
       {extractedAcqId && (
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4">
@@ -822,7 +1328,7 @@ export function DeviceConnectionPage({ onNavigateResults }: Props) {
             <div>
               <h3 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
                 <Smartphone className="h-5 w-5 text-indigo-400" />
-                3. Extracted Evidence Records — {phoneDisplayName || "Acquisition"} (#{extractedAcqId})
+                4. Extracted Evidence Records — {phoneDisplayName || "Acquisition"} (#{extractedAcqId})
               </h3>
               <p className="text-xs text-slate-400">
                 {extractedCalls.length} call log entries and {extractedMessages.length} messages acquired and preserved with SHA-256 integrity

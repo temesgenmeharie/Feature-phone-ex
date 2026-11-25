@@ -198,11 +198,12 @@ def extract_from_udisk(
 
     device = Device(
         case_id=case.id,
+        port_name=f"UDISK://{drive_letter.replace(':', '')}",
         manufacturer=vendor,
         model=model,
-        serial_number=f"UDISK-{drive_letter.replace(':', '')}",
         imei="N/A (U-Disk Mode)",
         is_simulated=False,
+        identified_at=datetime.now(timezone.utc),
     )
     db.add(device)
     db.commit()

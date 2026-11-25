@@ -59,14 +59,18 @@ KNOWN_PHONE_HARDWARE_IDS = [
     (r"VID_0E8D&PID_2000", "MediaTek PreLoader USB VCOM Port", "MediaTek"),
     (r"VID_0E8D&PID_0001", "MediaTek DA USB VCOM Port", "MediaTek"),
     (r"VID_0E8D&PID_0002", "MediaTek USB Mass Storage", "MediaTek"),
+    (r"VID_0E8D&PID_0023", "MediaTek USB Modem / VCOM Port", "MediaTek"),
+    (r"VID_0E8D", "MediaTek USB Feature Phone", "MediaTek"),
     # Spreadtrum / UNISOC
     (r"VID_1782&PID_4D00", "Spreadtrum USB Serial Port", "Spreadtrum (UNISOC)"),
     (r"VID_1782&PID_4D01", "Spreadtrum USB Mass Storage (H-MOBILE)", "Spreadtrum (UNISOC)"),
     (r"VID_1782&PID_4D02", "Spreadtrum AT Command Port", "Spreadtrum (UNISOC)"),
     (r"VID_1782&PID_4D03", "Spreadtrum Diag Port", "Spreadtrum (UNISOC)"),
+    (r"VID_1782", "Spreadtrum / UNISOC USB Feature Phone", "Spreadtrum (UNISOC)"),
     # Qualcomm
     (r"VID_05C6&PID_9008", "Qualcomm HS-USB QDLoader", "Qualcomm"),
     (r"VID_05C6&PID_9091", "Qualcomm HS-USB Diagnostics / Modem", "Qualcomm"),
+    (r"VID_05C6", "Qualcomm USB Handset", "Qualcomm"),
     # Nokia
     (r"VID_0421", "Nokia Mobile Phone", "Nokia"),
 ]
@@ -193,12 +197,20 @@ def detect_driver_problem_devices() -> list[DriverProblemDevice]:
                                     if prob_code != 0:
                                         for pattern, name, vendor in KNOWN_PHONE_HARDWARE_IDS:
                                             if re.search(pattern, full_id, re.IGNORECASE):
-                                                guide = (
-                                                    f"{vendor} feature phone is in COM/Modem mode, but Windows has not bound the standard USB Serial driver (Code {prob_code}). "
-                                                    "To enable COM port communication: Run D:\\FeaturePhone\\Install_Phone_Drivers.bat as Administrator, "
-                                                    "or open Device Manager -> Right click device -> Update Driver -> Browse my computer -> Let me pick from a list -> "
-                                                    "Ports (COM & LPT) -> Standard Port Types -> USB Serial Device (usbser.sys)."
-                                                )
+                                                if prob_code == 10:
+                                                    prob_desc = "Wrong serial driver bound (Code 10: Communications Port / serial.sys cannot start over USB)."
+                                                    guide = (
+                                                        f"{vendor} handset has Code 10 because 'Communications Port' (serial.sys) was selected instead of 'USB Serial Device' (usbser.sys). "
+                                                        "Fix in Device Manager: Expand Ports (COM & LPT) -> right-click Communications Port (COM3) -> Update driver -> "
+                                                        "Browse my computer -> Let me pick from a list -> Manufacturer: Microsoft -> Model: USB Serial Device."
+                                                    )
+                                                else:
+                                                    prob_desc = f"Device driver missing or failed install (Code {prob_code})."
+                                                    guide = (
+                                                        f"{vendor} feature phone is in COM/Modem mode, but Windows has not bound the standard USB Serial driver (Code {prob_code}). "
+                                                        "To enable COM port communication: Open Device Manager -> Right click device -> Update Driver -> Browse my computer -> Let me pick from a list -> "
+                                                        "Ports (COM & LPT) -> Manufacturer: Microsoft (or Standard port types) -> Model: USB Serial Device (usbser.sys)."
+                                                    )
                                                 problems.append(
                                                     DriverProblemDevice(
                                                         instance_id=full_id,
@@ -206,7 +218,7 @@ def detect_driver_problem_devices() -> list[DriverProblemDevice]:
                                                         device_name=name,
                                                         vendor=vendor,
                                                         problem_code=prob_code,
-                                                        problem_description=f"Device driver missing or failed install (Code {prob_code}).",
+                                                        problem_description=prob_desc,
                                                         resolution_guide=guide,
                                                     )
                                                 )
@@ -252,12 +264,16 @@ def detect_usb_connection_mode() -> USBModeReport:
             charging_detected=True,
         )
 
-    if usb_com_ports:
-        port = usb_com_ports[0]
-        msg = f"Detected feature phone COM port {port.port_name} ({port.description}). Ready for AT command extraction."
+    if driver_problems:
+        prob = driver_problems[0]
+        msg = (
+            f"Detected {prob.vendor} handset connected in COM mode ({prob.device_name}), "
+            f"but Windows could not start the COM port (Driver Code {prob.problem_code}). "
+            f"Resolution: {prob.resolution_guide}"
+        )
         return USBModeReport(
-            primary_mode="COM",
-            detected_vendor="USB Modem / AT Handset",
+            primary_mode="COM_DRIVER_MISSING",
+            detected_vendor=prob.vendor,
             summary_message=msg,
             udisk_drives=udisk_drives,
             com_ports=com_ports,
@@ -265,16 +281,12 @@ def detect_usb_connection_mode() -> USBModeReport:
             charging_detected=True,
         )
 
-    if driver_problems:
-        prob = driver_problems[0]
-        msg = (
-            f"Detected {prob.vendor} handset connected in COM mode ({prob.device_name}), "
-            f"but Windows has not assigned a COM port (Driver Code {prob.problem_code}). "
-            f"Resolution: {prob.resolution_guide}"
-        )
+    if usb_com_ports:
+        port = usb_com_ports[0]
+        msg = f"Detected feature phone COM port {port.port_name} ({port.description}). Ready for AT command extraction."
         return USBModeReport(
-            primary_mode="COM_DRIVER_MISSING",
-            detected_vendor=prob.vendor,
+            primary_mode="COM",
+            detected_vendor="USB Modem / AT Handset",
             summary_message=msg,
             udisk_drives=udisk_drives,
             com_ports=com_ports,
